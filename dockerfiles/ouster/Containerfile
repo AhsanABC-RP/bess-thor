@@ -1,0 +1,40 @@
+# BESS Ouster LiDAR Driver Container
+# Supports dual Ouster OS1/OS2 sensors with hardware PTP sync
+# Build: docker build -t localhost/bess-ouster:jazzy -f Containerfile .
+
+FROM localhost/bess-base:jazzy
+
+# Install Ouster SDK dependencies
+RUN apt-get update && apt-get install -y \
+    libjsoncpp-dev \
+    libtins-dev \
+    libcurl4-openssl-dev \
+    libspdlog-dev \
+    libfmt-dev \
+    libglfw3-dev \
+    libglew-dev \
+    libeigen3-dev \
+    libpng-dev \
+    libpcap-dev \
+    libzip-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone Ouster ROS2 driver (it will fetch its own SDK via FetchContent)
+WORKDIR /ros2_ws/src
+RUN git clone --branch ros2 --depth 1 --recurse-submodules https://github.com/ouster-lidar/ouster-ros.git
+
+# Build the ROS2 workspace - let it build the SDK internally
+WORKDIR /ros2_ws
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    colcon build --symlink-install --cmake-args \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DFETCH_SDK=ON"
+
+# Copy launch file for dual LiDAR setup
+COPY launch_dual_ouster.py /ros2_ws/launch_dual_ouster.py
+
+# Environment
+ENV ROS_DOMAIN_ID=0
+
+# Default command: launch dual Ouster driver
+CMD ["ros2", "launch", "/ros2_ws/launch_dual_ouster.py"]

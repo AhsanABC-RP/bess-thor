@@ -1,0 +1,115 @@
+# BESS ROS2 Sensing Stack - Docker Compose
+# NVIDIA Thor Dev Kit (Grace Blackwell) - Ubuntu 24.04 / CUDA 13.0
+#
+# Usage:
+#   docker compose up -d         # Start all services
+#   docker compose ps            # Check status
+#   docker compose logs -f       # View logs
+#   docker compose down          # Stop all services
+
+services:
+  ouster:
+    image: localhost/bess-ouster:jazzy
+    container_name: bess-ouster
+    network_mode: host
+    privileged: true
+    runtime: nvidia
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - ./config:/ros2_ws/config:ro
+    restart: unless-stopped
+    # Depends on LiDAR being reachable at 192.168.1.1 (default Ouster IP)
+
+  cameras:
+    image: localhost/bess-cameras:jazzy
+    container_name: bess-cameras
+    network_mode: host
+    privileged: true
+    runtime: nvidia
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - ./config:/ros2_ws/config:ro
+      - /dev:/dev
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    restart: unless-stopped
+    # USB cameras will be at /dev/video* devices
+    # FLIR cameras connect via Ethernet (Spinnaker SDK auto-discovers)
+
+  microstrain:
+    image: localhost/bess-microstrain:jazzy
+    container_name: bess-microstrain
+    network_mode: host
+    privileged: true
+    runtime: nvidia
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    volumes:
+      - ./config:/ros2_ws/config:ro
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    restart: unless-stopped
+    # MicroStrain GQ7 typically shows up as /dev/ttyACM0
+    # May need to adjust device path based on actual USB enumeration
+
+  recorder:
+    image: localhost/bess-recorder:jazzy
+    container_name: bess-recorder
+    network_mode: host
+    runtime: nvidia
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    volumes:
+      - ./data/bags:/data/bags
+      - ./config:/ros2_ws/config:ro
+    restart: unless-stopped
+    # Records all sensor topics to MCAP format in /data/bags
+    depends_on:
+      - ouster
+      - cameras
+      - microstrain
+
+  foxglove:
+    image: localhost/bess-foxglove:jazzy
+    container_name: bess-foxglove
+    network_mode: host
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    restart: unless-stopped
+    # Foxglove Studio: Connect to ws://thor-ip:8765
+
+  kiss-icp:
+    image: localhost/bess-kiss-icp:jazzy
+    container_name: bess-kiss-icp
+    network_mode: host
+    runtime: nvidia
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+    restart: unless-stopped
+    profiles:
+      - slam
+    # LiDAR odometry - start with: docker compose --profile slam up -d
+
+# Notes:
+# - All containers use host networking for ROS2 DDS discovery
+# - privileged mode required for direct hardware access
+# - nvidia runtime enables GPU acceleration
+# - Foxglove bridge available at ws://hostname:8765
+#
+# Network Configuration:
+# - Ouster LiDAR: Configure host NIC with static IP 192.168.1.100/24
+# - FLIR cameras (10GigE): May need separate NIC with 192.168.2.100/24
+# - MicroStrain IMU: USB device, typically /dev/ttyACM0
+# - Sony USB cameras: /dev/video* devices

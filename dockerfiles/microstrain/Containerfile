@@ -1,0 +1,36 @@
+# BESS MicroStrain IMU Driver Container
+# Supports MicroStrain 3DM-GQ7 and similar IMUs
+# Build: docker build -t localhost/bess-microstrain:jazzy -f Containerfile .
+
+FROM localhost/bess-base:jazzy
+
+# Install IMU dependencies
+RUN apt-get update && apt-get install -y \
+    libboost-filesystem-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone MicroStrain ROS2 driver
+WORKDIR /ros2_ws/src
+RUN git clone --depth 1 --branch ros2 https://github.com/LORD-MicroStrain/microstrain_inertial.git
+
+# Install ROS dependencies
+WORKDIR /ros2_ws
+RUN apt-get update && \
+    rosdep install --from-paths src --ignore-src -r -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build the workspace
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+
+# Copy launch file
+COPY launch_imu.py /ros2_ws/launch_imu.py
+
+# Environment
+ENV ROS_DOMAIN_ID=0
+
+# udev rules for USB access
+# Note: Run container with --device=/dev/ttyACM0 or similar
+
+# Default command
+CMD ["ros2", "launch", "/ros2_ws/launch_imu.py"]

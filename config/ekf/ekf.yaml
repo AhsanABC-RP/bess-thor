@@ -1,0 +1,114 @@
+# BESS robot_localization EKF Configuration
+# Fuses vehicle odometry (CAN), IMU, and SLAM odometry
+
+/**:
+  ros__parameters:
+    # Frequency and timing
+    frequency: 50.0
+    sensor_timeout: 0.1
+    two_d_mode: false
+
+    # Transform settings
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
+
+    # Frame configuration
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # Publishing
+    publish_tf: true
+    publish_acceleration: true
+
+    # Debug
+    print_diagnostics: true
+
+    # Initial state (optional)
+    # initial_state: [0.0, 0.0, 0.0,  # x, y, z
+    #                 0.0, 0.0, 0.0,  # roll, pitch, yaw
+    #                 0.0, 0.0, 0.0,  # vx, vy, vz
+    #                 0.0, 0.0, 0.0,  # vroll, vpitch, vyaw
+    #                 0.0, 0.0, 0.0]  # ax, ay, az
+
+    # ==========================================
+    # Sensor 0: Vehicle odometry from Tesla CAN
+    # ==========================================
+    twist0: /vehicle/twist
+    twist0_config: [false, false, false,    # x, y, z
+                    false, false, false,    # roll, pitch, yaw
+                    true,  false, false,    # vx, vy, vz
+                    false, false, true,     # vroll, vpitch, vyaw
+                    false, false, false]    # ax, ay, az
+    twist0_queue_size: 10
+    twist0_rejection_threshold: 2.0
+    twist0_differential: false
+
+    # ==========================================
+    # Sensor 1: IMU (MicroStrain)
+    # ==========================================
+    imu0: /imu/data
+    imu0_config: [false, false, false,    # x, y, z
+                  true,  true,  true,     # roll, pitch, yaw
+                  false, false, false,    # vx, vy, vz
+                  true,  true,  true,     # vroll, vpitch, vyaw
+                  true,  true,  true]     # ax, ay, az
+    imu0_queue_size: 10
+    imu0_differential: false
+    imu0_relative: false
+    imu0_remove_gravitational_acceleration: true
+    imu0_rejection_threshold: 2.0
+
+    # ==========================================
+    # Sensor 2: SLAM odometry (FAST-LIO)
+    # ==========================================
+    odom0: /slam/odometry
+    odom0_config: [true,  true,  true,    # x, y, z
+                   true,  true,  true,    # roll, pitch, yaw
+                   false, false, false,   # vx, vy, vz (use velocities from SLAM)
+                   false, false, false,   # vroll, vpitch, vyaw
+                   false, false, false]   # ax, ay, az
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+    odom0_rejection_threshold: 2.0
+
+    # ==========================================
+    # Process noise covariance
+    # ==========================================
+    # Order: x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az
+    process_noise_covariance: [0.05,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.05,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.06,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.03,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.03,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.06,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.025,  0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.025,  0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.04,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.01,   0.0,    0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.01,   0.0,    0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.02,   0.0,    0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.01,   0.0,    0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.01,   0.0,
+                               0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.015]
+
+    # ==========================================
+    # Initial estimate covariance
+    # ==========================================
+    initial_estimate_covariance: [1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,
+                                  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9]

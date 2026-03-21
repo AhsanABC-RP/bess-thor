@@ -1,0 +1,616 @@
+# =============================================================================
+# BESS Thor - Unified ROS2 Sensing Stack
+# Thor Dev Kit (Grace Blackwell, ARM64) - Ubuntu 24.04 / CUDA 13.0
+# =============================================================================
+#
+# Based on bess_platform production patterns with:
+# - CycloneDDS (better for large messages than FastDDS)
+# - Health checks on all sensors
+# - Lucid Atlas 64MP support
+# - Full thermal stack (A6701 x2 + A70 x2)
+#
+# USAGE:
+#   docker compose -f docker-compose.thor.yml --profile sensors up -d
+#   docker compose -f docker-compose.thor.yml --profile full up -d
+#
+# =============================================================================
+
+# Common configuration - CycloneDDS instead of FastDDS
+x-common: &common
+  runtime: nvidia
+  network_mode: host
+  ipc: host
+  privileged: true
+  environment: &common-env
+    ROS_DOMAIN_ID: "0"
+    RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+    CYCLONEDDS_URI: file:///config/cyclonedds.xml
+    FASTRTPS_DEFAULT_PROFILES_FILE: /config/fastrtps.xml
+    NVIDIA_VISIBLE_DEVICES: all
+    NVIDIA_DRIVER_CAPABILITIES: all
+    CUDA_VISIBLE_DEVICES: "0"
+  restart: unless-stopped
+
+x-healthcheck-ros2: &healthcheck-ros2
+  interval: 30s
+  timeout: 15s
+  retries: 3
+  start_period: 60s
+
+services:
+  # ===========================================================================
+  # SENSORS - LiDAR
+  # ===========================================================================
+  ouster:
+    <<: *common
+    image: localhost/bess-ouster:jazzy
+    container_name: ouster
+    volumes:
+      - ./config/ouster_params.yaml:/params.yaml:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash
+        while true; do
+          echo "[ouster] Starting driver..."
+          timeout 300 ros2 launch ouster_ros driver.launch.py \
+            params_file:=/params.yaml viz:=false || true
+          echo "[ouster] Driver exited, restarting in 10s..."
+          sleep 10
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /ouster/points >/dev/null 2>&1"]
+    profiles:
+      - lidar
+      - sensors
+      - dev
+      - full
+
+  # ===========================================================================
+  # SENSORS - IMU (MicroStrain GQ7 via Moxa TCP)
+  # ===========================================================================
+  microstrain:
+    <<: *common
+    image: localhost/bess-microstrain:jazzy
+    container_name: microstrain
+    volumes:
+      - ./config:/ros2_ws/config:ro
+      - ./config/microstrain/launch_imu.py:/ros2_ws/launch_imu.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        apt-get update && apt-get install -y socat >/dev/null 2>&1 || true
+        while true; do
+          echo "[microstrain] Creating socat bridge to Moxa..."
+          socat pty,link=/dev/microstrain,raw,echo=0,mode=666 tcp:192.168.127.254:4001 &
+          SOCAT_PID=$!
+          sleep 3
+          if [ -e /dev/microstrain ]; then
+            break
+          fi
+          echo "[microstrain] socat failed, retrying..."
+          kill $SOCAT_PID 2>/dev/null || true
+          sleep 5
+        done
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash
+        exec ros2 launch /ros2_ws/launch_imu.py
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /imu/data >/dev/null 2>&1"]
+    profiles:
+      - imu
+      - sensors
+      - dev
+      - full
+
+  # ===========================================================================
+  # SENSORS - Thermal MWIR (FLIR A6701 x2 via Spinnaker)
+  # ===========================================================================
+  thermal1:
+    <<: *common
+    image: localhost/bess-thermal-spinnaker:jazzy
+    container_name: thermal1
+    volumes:
+      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/humble/setup.bash
+        source /ros2_ws/install/setup.bash
+        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        while true; do
+          echo "[thermal1] Starting A6701 #1 (MAC 00:11:1c:05:8f:20)..."
+          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
+            -r __ns:=/thermal/camera1 \
+            -p frame_id:=thermal1_optical_frame \
+            -p camera_mac:=00:11:1c:05:8f:20 || true
+          echo "[thermal1] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera1/image_raw >/dev/null 2>&1"]
+    profiles:
+      - thermal
+      - sensors
+      - dev
+      - full
+
+  thermal2:
+    <<: *common
+    image: localhost/bess-thermal-spinnaker:jazzy
+    container_name: thermal2
+    volumes:
+      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/humble/setup.bash
+        source /ros2_ws/install/setup.bash
+        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        while true; do
+          echo "[thermal2] Starting A6701 #2 (MAC 00:11:1c:05:8f:27)..."
+          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
+            -r __ns:=/thermal/camera2 \
+            -p frame_id:=thermal2_optical_frame \
+            -p camera_mac:=00:11:1c:05:8f:27 || true
+          echo "[thermal2] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera2/image_raw >/dev/null 2>&1"]
+    profiles:
+      - thermal
+      - sensors
+      - dev
+      - full
+
+  # ===========================================================================
+  # SENSORS - Thermal LWIR (FLIR A70 x2 via Spinnaker)
+  # ===========================================================================
+  thermal3:
+    <<: *common
+    image: localhost/bess-thermal-spinnaker:jazzy
+    container_name: thermal3
+    volumes:
+      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/humble/setup.bash
+        source /ros2_ws/install/setup.bash
+        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        while true; do
+          echo "[thermal3] Starting A70 #1 (MAC 00:40:7f:04:fa:7b)..."
+          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
+            -r __ns:=/thermal/camera3 \
+            -p frame_id:=thermal3_optical_frame \
+            -p camera_mac:=00:40:7f:04:fa:7b \
+            -p frame_rate:=15.0 || true
+          echo "[thermal3] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera3/image_raw >/dev/null 2>&1"]
+    profiles:
+      - thermal
+      - sensors
+      - dev
+      - full
+
+  thermal4:
+    <<: *common
+    image: localhost/bess-thermal-spinnaker:jazzy
+    container_name: thermal4
+    volumes:
+      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/humble/setup.bash
+        source /ros2_ws/install/setup.bash
+        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        while true; do
+          echo "[thermal4] Starting A70 #2 (MAC 00:40:7f:10:a2:bc)..."
+          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
+            -r __ns:=/thermal/camera4 \
+            -p frame_id:=thermal4_optical_frame \
+            -p camera_mac:=00:40:7f:10:a2:bc \
+            -p frame_rate:=15.0 || true
+          echo "[thermal4] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera4/image_raw >/dev/null 2>&1"]
+    profiles:
+      - thermal
+      - sensors
+      - dev
+      - full
+
+  # ===========================================================================
+  # SENSORS - Lucid Atlas 64MP (10GigE via Arena SDK)
+  # ===========================================================================
+  lucid1:
+    <<: *common
+    image: localhost/bess-lucid:jazzy
+    container_name: lucid1
+    volumes:
+      - ./containers/lucid/lucid_node.py:/ros2_ws/lucid_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash 2>/dev/null || true
+        while true; do
+          echo "[lucid1] Starting Lucid Atlas #1..."
+          python3 /ros2_ws/lucid_node.py --ros-args \
+            -p camera_ip:=169.254.232.169 \
+            -p camera_name:=lucid1 \
+            -p frame_id:=lucid1_optical_frame \
+            -p fps:=5.0 \
+            -p binning:=4 || true
+          echo "[lucid1] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /lucid1/camera_driver/image_raw >/dev/null 2>&1"]
+    profiles:
+      - lucid
+      - rgb
+      - sensors
+      - dev
+      - full
+
+  # lucid2 - Second Atlas when it arrives
+  # lucid2:
+  #   <<: *common
+  #   image: localhost/bess-lucid:jazzy
+  #   ...
+
+  # ===========================================================================
+  # SENSORS - Blackfly S (via Spinnaker)
+  # ===========================================================================
+  blackfly1:
+    <<: *common
+    image: localhost/bess-thermal-spinnaker:jazzy
+    container_name: blackfly1
+    volumes:
+      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/humble/setup.bash
+        source /ros2_ws/install/setup.bash
+        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        while true; do
+          echo "[blackfly1] Starting Blackfly S #1 (MAC 2c:dd:a3:7e:96:75)..."
+          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
+            -r __ns:=/blackfly/camera1 \
+            -p frame_id:=blackfly1_optical_frame \
+            -p camera_mac:=2c:dd:a3:7e:96:75 \
+            -p frame_rate:=4.0 || true
+          echo "[blackfly1] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /blackfly/camera1/image_raw >/dev/null 2>&1"]
+    profiles:
+      - blackfly
+      - rgb
+      - sensors
+      - dev
+      - full
+
+  blackfly2:
+    <<: *common
+    image: localhost/bess-thermal-spinnaker:jazzy
+    container_name: blackfly2
+    volumes:
+      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/humble/setup.bash
+        source /ros2_ws/install/setup.bash
+        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        while true; do
+          echo "[blackfly2] Starting Blackfly S #2 (MAC 2c:dd:a3:7e:96:76)..."
+          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
+            -r __ns:=/blackfly/camera2 \
+            -p frame_id:=blackfly2_optical_frame \
+            -p camera_mac:=2c:dd:a3:7e:96:76 \
+            -p frame_rate:=4.0 || true
+          echo "[blackfly2] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /blackfly/camera2/image_raw >/dev/null 2>&1"]
+    profiles:
+      - blackfly
+      - rgb
+      - sensors
+      - dev
+      - full
+
+  # ===========================================================================
+  # IMAGE COMPRESSION (for Foxglove streaming)
+  # ===========================================================================
+  compress-thermal1:
+    <<: *common
+    image: localhost/bess-thermal:jazzy
+    container_name: compress-thermal1
+    environment:
+      <<: *common-env
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/thermal/camera1/image_raw -p output_topic:=/thermal/camera1/image_raw/compressed"]
+    profiles: [thermal, sensors, dev, full]
+
+  compress-thermal2:
+    <<: *common
+    image: localhost/bess-thermal:jazzy
+    container_name: compress-thermal2
+    environment:
+      <<: *common-env
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/thermal/camera2/image_raw -p output_topic:=/thermal/camera2/image_raw/compressed"]
+    profiles: [thermal, sensors, dev, full]
+
+  compress-thermal3:
+    <<: *common
+    image: localhost/bess-thermal:jazzy
+    container_name: compress-thermal3
+    environment:
+      <<: *common-env
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/thermal/camera3/image_raw -p output_topic:=/thermal/camera3/image_raw/compressed"]
+    profiles: [thermal, sensors, dev, full]
+
+  compress-thermal4:
+    <<: *common
+    image: localhost/bess-thermal:jazzy
+    container_name: compress-thermal4
+    environment:
+      <<: *common-env
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/thermal/camera4/image_raw -p output_topic:=/thermal/camera4/image_raw/compressed"]
+    profiles: [thermal, sensors, dev, full]
+
+  compress-lucid1:
+    <<: *common
+    image: localhost/bess-lucid:jazzy
+    container_name: compress-lucid1
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/lucid1/camera_driver/image_raw -p output_topic:=/lucid1/camera_driver/image_raw/compressed"]
+    profiles: [lucid, rgb, sensors, dev, full]
+
+  compress-blackfly1:
+    <<: *common
+    image: localhost/bess-thermal:jazzy
+    container_name: compress-blackfly1
+    environment:
+      <<: *common-env
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera1/image_raw -p output_topic:=/blackfly/camera1/image_raw/compressed"]
+    profiles: [blackfly, rgb, sensors, dev, full]
+
+  compress-blackfly2:
+    <<: *common
+    image: localhost/bess-thermal:jazzy
+    container_name: compress-blackfly2
+    environment:
+      <<: *common-env
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera2/image_raw -p output_topic:=/blackfly/camera2/image_raw/compressed"]
+    profiles: [blackfly, rgb, sensors, dev, full]
+
+  # ===========================================================================
+  # THERMAL PROCESSING
+  # ===========================================================================
+  thermal-colormap:
+    <<: *common
+    image: localhost/bess-thermal:jazzy
+    container_name: thermal-colormap
+    volumes:
+      - ./dockerfiles/thermal/thermal_colormap_node.py:/ros2_ws/thermal_colormap_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash
+        exec python3 /ros2_ws/thermal_colormap_node.py
+    profiles:
+      - thermal
+      - sensors
+      - dev
+      - full
+
+  # ===========================================================================
+  # VISUALIZATION
+  # ===========================================================================
+  foxglove:
+    <<: *common
+    image: localhost/bess-foxglove:jazzy
+    container_name: foxglove
+    volumes:
+      - ./config/certs:/certs:ro
+    environment:
+      <<: *common-env
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    command: >
+      bash -c "source /opt/ros/jazzy/setup.bash &&
+               export RMW_IMPLEMENTATION=rmw_fastrtps_cpp &&
+               ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765 tls:=true certfile:=/certs/cert.pem keyfile:=/certs/key.pem"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - viz
+      - dev
+      - full
+
+  # ===========================================================================
+  # SLAM (from original compose - kept for reference)
+  # ===========================================================================
+  glim:
+    image: glim-ros2:humble
+    container_name: glim
+    network_mode: host
+    ipc: host
+    environment:
+      ROS_DOMAIN_ID: "0"
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///config/cyclonedds.xml
+      CUDA_VISIBLE_DEVICES: ""
+      NVIDIA_VISIBLE_DEVICES: ""
+      GLIM_DATA_PATH: /usr/local/share/glim
+    volumes:
+      - ./config/glim:/config:ro
+      - ./maps:/maps:rw
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: >
+      bash -c "source /opt/ros/humble/setup.bash &&
+               ros2 run glim_ros glim_rosnode --ros-args -p config_path:=/config"
+    profiles:
+      - slam
+      - full
+    restart: unless-stopped
+
+  kiss-icp:
+    <<: *common
+    image: localhost/bess-kiss-icp:jazzy
+    container_name: kiss-icp
+    volumes:
+      - ./config/kiss_icp.yaml:/config/kiss_icp.yaml:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: >
+      bash -c "source /opt/ros/jazzy/setup.bash &&
+               source /ros2_ws/install/setup.bash &&
+               ros2 launch kiss_icp odometry.launch.py
+               topic:=/ouster/points
+               visualize:=false"
+    profiles:
+      - kiss
+      - dev
+
+  # ===========================================================================
+  # RECORDING
+  # ===========================================================================
+  recorder:
+    <<: *common
+    image: localhost/bess-ouster:jazzy
+    container_name: recorder
+    volumes:
+      - /home/thor/recordings:/recordings:rw
+      - /home/thor/rosbag_qos.yaml:/rosbag_qos.yaml:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    working_dir: /recordings
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)_$$
+        exec ros2 bag record \
+          --output /recordings/capture_${TIMESTAMP} \
+          --qos-profile-overrides-path /rosbag_qos.yaml \
+          --max-cache-size 500000000 \
+          /ouster/points \
+          /ouster/imu \
+          /thermal/camera1/image_raw \
+          /thermal/camera2/image_raw \
+          /thermal/camera3/image_raw \
+          /thermal/camera4/image_raw \
+          /lucid1/camera_driver/image_raw \
+          /imu/data \
+          /tf \
+          /tf_static
+    profiles:
+      - record
+    restart: "no"
+
+# ===========================================================================
+# VOLUMES
+# ===========================================================================
+volumes:
+  recordings:
+    driver: local
+  maps:
+    driver: local
+  models:
+    driver: local
+  data:
+    driver: local

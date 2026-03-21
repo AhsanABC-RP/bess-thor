@@ -1,0 +1,36 @@
+# BESS Rosbag2 Recorder Container
+# High-performance bag recording with MCAP format
+# Build: docker build -t localhost/bess-recorder:jazzy -f Containerfile .
+
+FROM localhost/bess-base:jazzy
+
+# Install additional compression libraries
+RUN apt-get update && apt-get install -y \
+    libzstd-dev \
+    liblz4-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ros2bag with MCAP support (already in base, ensure latest)
+RUN apt-get update && apt-get install -y \
+    ros-jazzy-rosbag2-storage-mcap \
+    ros-jazzy-rosbag2-transport \
+    ros-jazzy-rosbag2-compression-zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create recording directory
+RUN mkdir -p /data/bags
+
+# Copy launch file
+COPY launch_recorder.py /ros2_ws/launch_recorder.py
+COPY record_all.sh /ros2_ws/record_all.sh
+RUN chmod +x /ros2_ws/record_all.sh
+
+# Volume for bag storage
+VOLUME /data/bags
+
+# Environment
+ENV ROS_DOMAIN_ID=0
+ENV ROSBAG2_STORAGE=mcap
+
+# Default command
+CMD ["/ros2_ws/record_all.sh"]

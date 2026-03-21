@@ -1,0 +1,12 @@
+# Foxglove Bridge Container
+FROM localhost/bess-base:jazzy
+
+# Install Foxglove bridge
+RUN apt-get update && apt-get install -y \
+    ros-jazzy-foxglove-bridge \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+CMD ["bash", "-c", "source /opt/ros/jazzy/setup.bash && ros2 run foxglove_bridge foxglove_bridge --ros-args -p port:=8765 -p address:=0.0.0.0"]

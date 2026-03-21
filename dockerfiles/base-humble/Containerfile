@@ -1,0 +1,111 @@
+# BESS Base ROS2 Jazzy Image with CUDA Support for NVIDIA Thor
+# Build: docker build -t localhost/bess-base:jazzy -f Containerfile .
+
+ARG CUDA_VERSION=13.0.0
+ARG UBUNTU_VERSION=24.04
+
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# ROS2 Jazzy distribution
+ENV ROS_DISTRO=jazzy
+
+# Setup locale
+RUN apt-get update && apt-get install -y locales && \
+    locale-gen en_US en_US.UTF-8 && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# Install base utilities (needed to add ROS2 repo)
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg2 \
+    lsb-release \
+    software-properties-common \
+    wget \
+    git \
+    build-essential \
+    cmake \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add ROS2 apt repository (noble = Ubuntu 24.04)
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu noble main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+# Install colcon from ROS2 repo
+RUN apt-get update && apt-get install -y \
+    python3-colcon-common-extensions \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ROS2 Jazzy base + development tools
+RUN apt-get update && apt-get install -y \
+    ros-jazzy-ros-base \
+    ros-jazzy-rmw-fastrtps-cpp \
+    ros-jazzy-rmw-cyclonedds-cpp \
+    ros-jazzy-rosbag2 \
+    ros-jazzy-rosbag2-storage-mcap \
+    ros-jazzy-tf2-ros \
+    ros-jazzy-tf2-eigen \
+    ros-jazzy-tf2-geometry-msgs \
+    ros-jazzy-diagnostic-updater \
+    ros-jazzy-image-transport \
+    ros-jazzy-compressed-image-transport \
+    ros-jazzy-cv-bridge \
+    ros-jazzy-pcl-ros \
+    ros-jazzy-pcl-conversions \
+    ros-jazzy-sensor-msgs \
+    ros-jazzy-geometry-msgs \
+    ros-jazzy-nav-msgs \
+    ros-jazzy-robot-localization \
+    python3-rosdep \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PCL and dependencies
+RUN apt-get update && apt-get install -y \
+    libpcl-dev \
+    libeigen3-dev \
+    libopencv-dev \
+    libboost-all-dev \
+    libtbb-dev \
+    libgflags-dev \
+    libgoogle-glog-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install additional tools
+RUN apt-get update && apt-get install -y \
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    tcpdump \
+    htop \
+    vim \
+    tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+# Initialize rosdep
+RUN rosdep init || true && \
+    rosdep update --rosdistro=jazzy
+
+# Create workspace
+RUN mkdir -p /ros2_ws/src
+WORKDIR /ros2_ws
+
+# Setup environment variables
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+ENV ROS_DOMAIN_ID=0
+
+# Source ROS2 in bashrc
+RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc && \
+    echo "if [ -f /ros2_ws/install/setup.bash ]; then source /ros2_ws/install/setup.bash; fi" >> /root/.bashrc
+
+# Default entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

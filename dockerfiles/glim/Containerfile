@@ -1,0 +1,62 @@
+# GLIM - LiDAR Mapping Container (CPU version)
+FROM localhost/bess-base:jazzy
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    libboost-all-dev \
+    libeigen3-dev \
+    libpcl-dev \
+    libopencv-dev \
+    libtbb-dev \
+    libfmt-dev \
+    libspdlog-dev \
+    libglfw3-dev \
+    libglew-dev \
+    libpng-dev \
+    ros-jazzy-pcl-ros \
+    ros-jazzy-pcl-conversions \
+    ros-jazzy-tf2-eigen \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build GTSAM from source
+WORKDIR /tmp
+RUN git clone --depth 1 --branch 4.2 https://github.com/borglab/gtsam.git && \
+    cd gtsam && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+        -DGTSAM_BUILD_TESTS=OFF \
+        -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
+        -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF \
+        -DGTSAM_USE_SYSTEM_EIGEN=ON && \
+    make -j$(nproc) && make install && ldconfig && rm -rf /tmp/gtsam
+
+# Build Iridescence visualization library (with submodules)
+RUN git clone --recursive https://github.com/koide3/iridescence.git && \
+    cd iridescence && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) && make install && ldconfig && rm -rf /tmp/iridescence
+
+# Clone and build gtsam_points
+WORKDIR /ros2_ws/src
+RUN git clone --depth 1 https://github.com/koide3/gtsam_points.git
+
+WORKDIR /ros2_ws
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    colcon build --symlink-install --packages-select gtsam_points --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_CUDA=OFF"
+
+# Clone and build GLIM
+WORKDIR /ros2_ws/src
+RUN git clone --depth 1 https://github.com/koide3/glim.git
+
+WORKDIR /ros2_ws
+RUN apt-get update && rosdep install --from-paths src --ignore-src -r -y && rm -rf /var/lib/apt/lists/*
+
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && \
+    colcon build --symlink-install --packages-select glim --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_CUDA=OFF"
+
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+RUN echo '#!/bin/bash\nsource /opt/ros/jazzy/setup.bash\nif [ -f /ros2_ws/install/setup.bash ]; then source /ros2_ws/install/setup.bash; fi\nexec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
+CMD ["ros2", "launch", "glim_ros", "glim.launch.py"]

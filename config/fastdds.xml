@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+    BESS FastDDS Configuration
+    Optimized for containerized ROS2 with shared memory and UDP multicast
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+
+    <profiles>
+        <!-- Default participant profile -->
+        <participant profile_name="bess_participant" is_default_profile="true">
+            <rtps>
+                <name>BESS_ROS2_Participant</name>
+
+                <!-- Discovery settings -->
+                <builtin>
+                    <discovery_config>
+                        <discoveryProtocol>SIMPLE</discoveryProtocol>
+                        <leaseDuration>
+                            <sec>10</sec>
+                            <nanosec>0</nanosec>
+                        </leaseDuration>
+                        <leaseAnnouncement>
+                            <sec>3</sec>
+                            <nanosec>0</nanosec>
+                        </leaseAnnouncement>
+                    </discovery_config>
+
+                    <!-- Use shared memory for intra-host communication -->
+                    <metatrafficUnicastLocatorList>
+                        <locator>
+                            <udpv4>
+                                <port>7400</port>
+                            </udpv4>
+                        </locator>
+                    </metatrafficUnicastLocatorList>
+                </builtin>
+
+                <!-- User traffic locators -->
+                <defaultUnicastLocatorList>
+                    <locator>
+                        <udpv4>
+                            <port>7410</port>
+                        </udpv4>
+                    </locator>
+                </defaultUnicastLocatorList>
+
+                <!-- Shared memory transport -->
+                <useBuiltinTransports>false</useBuiltinTransports>
+                <userTransports>
+                    <transport_id>shm_transport</transport_id>
+                    <transport_id>udp_transport</transport_id>
+                </userTransports>
+
+            </rtps>
+        </participant>
+
+        <!-- Shared memory transport -->
+        <transport_descriptors>
+            <transport_descriptor>
+                <transport_id>shm_transport</transport_id>
+                <type>SHM</type>
+                <segment_size>10485760</segment_size> <!-- 10MB -->
+                <port_queue_capacity>512</port_queue_capacity>
+                <healthy_check_timeout_ms>250</healthy_check_timeout_ms>
+                <rtps_dump_file></rtps_dump_file>
+            </transport_descriptor>
+
+            <transport_descriptor>
+                <transport_id>udp_transport</transport_id>
+                <type>UDPv4</type>
+                <sendBufferSize>1048576</sendBufferSize>
+                <receiveBufferSize>4194304</receiveBufferSize>
+            </transport_descriptor>
+        </transport_descriptors>
+
+        <!-- Publisher profile for sensor data (large messages) -->
+        <data_writer profile_name="sensor_publisher">
+            <qos>
+                <reliability>
+                    <kind>BEST_EFFORT</kind>
+                </reliability>
+                <durability>
+                    <kind>VOLATILE</kind>
+                </durability>
+                <publishMode>
+                    <kind>ASYNCHRONOUS</kind>
+                </publishMode>
+            </qos>
+            <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+        </data_writer>
+
+        <!-- Subscriber profile for sensor data -->
+        <data_reader profile_name="sensor_subscriber">
+            <qos>
+                <reliability>
+                    <kind>BEST_EFFORT</kind>
+                </reliability>
+                <durability>
+                    <kind>VOLATILE</kind>
+                </durability>
+            </qos>
+            <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+        </data_reader>
+
+        <!-- Publisher profile for reliable topics (TF, diagnostics) -->
+        <data_writer profile_name="reliable_publisher">
+            <qos>
+                <reliability>
+                    <kind>RELIABLE</kind>
+                    <max_blocking_time>
+                        <sec>0</sec>
+                        <nanosec>100000000</nanosec>
+                    </max_blocking_time>
+                </reliability>
+                <durability>
+                    <kind>TRANSIENT_LOCAL</kind>
+                </durability>
+            </qos>
+        </data_writer>
+
+    </profiles>
+
+</dds>

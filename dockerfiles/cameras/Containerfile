@@ -1,0 +1,120 @@
+# BESS Camera Driver Container - FLIR (Ethernet) + Sony USB
+# Uses Ubuntu 22.04 + ROS2 Humble for Spinnaker SDK compatibility
+# Communicates with Jazzy containers via DDS (cross-distro compatible)
+# Build: docker build -t localhost/bess-cameras:jazzy -f Containerfile .
+
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+ENV ROS_DISTRO=humble
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# Setup locale
+RUN apt-get update && apt-get install -y locales && \
+    locale-gen en_US en_US.UTF-8 && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+
+# Install base utilities
+RUN apt-get update && apt-get install -y \
+    curl gnupg2 lsb-release software-properties-common \
+    wget git build-essential cmake python3-pip \
+    v4l-utils libv4l-dev libusb-1.0-0 \
+    libavcodec-dev libavformat-dev libswscale-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add ROS2 repository
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+# Install ROS2 Humble + camera packages
+RUN apt-get update && apt-get install -y \
+    ros-humble-ros-base \
+    ros-humble-rmw-fastrtps-cpp \
+    ros-humble-image-transport \
+    ros-humble-compressed-image-transport \
+    ros-humble-cv-bridge \
+    ros-humble-camera-info-manager \
+    ros-humble-diagnostic-updater \
+    python3-rosdep python3-colcon-common-extensions \
+    && rm -rf /var/lib/apt/lists/*
+
+# Initialize rosdep
+RUN rosdep init || true && rosdep update --rosdistro=humble
+
+# Install Spinnaker SDK dependencies first
+RUN apt-get update && apt-get install -y \
+    libusb-1.0-0 \
+    libavcodec58 libavformat58 libswscale5 libavutil56 \
+    libgtkmm-2.4-1v5 \
+    libglibmm-2.4-1v5 \
+    libcairomm-1.0-1v5 \
+    libpangomm-1.4-1v5 \
+    libatkmm-1.6-1v5 \
+    libsigc++-2.0-0v5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Spinnaker SDK (aarch64 for Ubuntu 22.04)
+# Extract and modify libgentl to bypass EULA, then install all packages
+COPY spinnaker-4.3.0.189-Ubuntu22.04-arm64-pkg.tar.gz /tmp/
+RUN cd /tmp && \
+    tar xzf spinnaker-*.tar.gz && \
+    cd spinnaker-*-arm64 && \
+    # Extract libgentl and remove EULA check from preinst
+    mkdir -p /tmp/gentl-repack && \
+    dpkg-deb -R libgentl_*.deb /tmp/gentl-repack && \
+    # Replace preinst script with one that just exits 0
+    echo '#!/bin/sh\nexit 0' > /tmp/gentl-repack/DEBIAN/preinst && \
+    chmod 755 /tmp/gentl-repack/DEBIAN/preinst && \
+    # Also fix postrm if it exists
+    if [ -f /tmp/gentl-repack/DEBIAN/postrm ]; then \
+        echo '#!/bin/sh\nexit 0' > /tmp/gentl-repack/DEBIAN/postrm && \
+        chmod 755 /tmp/gentl-repack/DEBIAN/postrm; \
+    fi && \
+    dpkg-deb -b /tmp/gentl-repack /tmp/libgentl-fixed.deb && \
+    # Install the fixed libgentl first
+    dpkg -i /tmp/libgentl-fixed.deb && \
+    # Then install the rest
+    dpkg -i --force-depends --force-overwrite \
+        libspinnaker_*.deb \
+        libspinnaker-dev_*.deb \
+        libspinnaker-c_*.deb \
+        libspinnaker-c-dev_*.deb \
+        libspinvideo_*.deb \
+        libspinvideo-dev_*.deb \
+        libspinvideo-c_*.deb \
+        libspinvideo-c-dev_*.deb && \
+    ldconfig && \
+    # Clean up broken state
+    apt-get update && apt-get install -f -y || true && \
+    dpkg --configure -a || true && \
+    rm -rf /tmp/spinnaker-* /tmp/gentl-repack /tmp/libgentl-fixed.deb /var/lib/apt/lists/*
+
+# Clone camera drivers
+WORKDIR /ros2_ws/src
+RUN git clone --depth 1 https://github.com/ros-drivers/flir_camera_driver.git && \
+    git clone --depth 1 https://github.com/ros-drivers/usb_cam.git
+
+# Install ROS dependencies and build
+WORKDIR /ros2_ws
+RUN apt-get update && \
+    rosdep install --from-paths src --ignore-src -r -y && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+
+# Copy launch file
+COPY launch_dual_cameras.py /ros2_ws/launch_dual_cameras.py
+
+# Environment
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+# Entrypoint
+RUN echo '#!/bin/bash\nsource /opt/ros/humble/setup.bash\nif [ -f /ros2_ws/install/setup.bash ]; then source /ros2_ws/install/setup.bash; fi\nexec "$@"' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
+CMD ["ros2", "launch", "/ros2_ws/launch_dual_cameras.py"]

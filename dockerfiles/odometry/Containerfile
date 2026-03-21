@@ -1,0 +1,38 @@
+# BESS Odometry Container - Tesla CAN + robot_localization EKF
+# Vehicle odometry from CAN bus with sensor fusion
+# Build: podman build -t localhost/bess-odometry:humble -f Containerfile .
+
+FROM localhost/bess-base:humble
+
+# Install CAN and odometry dependencies
+RUN apt-get update && apt-get install -y \
+    can-utils \
+    libsocketcan-dev \
+    ros-humble-can-msgs \
+    ros-humble-socketcan-bridge \
+    ros-humble-robot-localization \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone socketcan_interface for ROS2
+WORKDIR /ros2_ws/src
+RUN git clone --depth 1 https://github.com/ros-industrial/ros_canopen.git
+
+# Install ROS dependencies
+WORKDIR /ros2_ws
+RUN apt-get update && \
+    rosdep install --from-paths src --ignore-src -r -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build workspace
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+
+# Copy Tesla CAN decoder and launch files
+COPY tesla_can_decoder.py /ros2_ws/tesla_can_decoder.py
+COPY launch_odometry.py /ros2_ws/launch_odometry.py
+
+# Environment
+ENV ROS_DOMAIN_ID=0
+
+# Default command
+CMD ["ros2", "launch", "/ros2_ws/launch_odometry.py"]

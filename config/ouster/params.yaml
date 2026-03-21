@@ -1,0 +1,35 @@
+# Ouster LiDAR Parameters - Thor Dev Kit
+# Sensor: OS1 SN:122310001278 at 169.254.70.119
+
+ouster/os_driver:
+  ros__parameters:
+    sensor_hostname: '169.254.70.119'
+    timestamp_mode: 'TIME_FROM_ROS_TIME'
+    lidar_mode: '1024x10'  # 1024 columns @ 10Hz
+    lidar_port: 0
+    imu_port: 0
+
+    # Frames
+    sensor_frame: os_sensor
+    lidar_frame: os_lidar
+    imu_frame: os_imu
+    point_cloud_frame: os_lidar
+    pub_static_tf: true
+
+    # Reduce processing load - only essential processors
+    # Remove IMG to reduce CPU load (was IMU|PCL|SCAN|IMG)
+    proc_mask: IMU|PCL|SCAN
+
+    # Use simpler point type for faster processing
+    point_type: xyzi
+
+    # Keep organized for faster access
+    organized: true
+    destagger: true
+
+    # Use system default QoS for larger buffers
+    use_system_default_qos: true
+
+    # Range limits
+    min_range: 0.5
+    max_range: 120.0

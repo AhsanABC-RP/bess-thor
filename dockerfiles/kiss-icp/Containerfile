@@ -1,0 +1,32 @@
+# KISS-ICP LiDAR Odometry Container
+FROM localhost/bess-base:jazzy
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    libeigen3-dev \
+    libtbb-dev \
+    python3-pip \
+    ros-jazzy-pcl-ros \
+    ros-jazzy-pcl-conversions \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build KISS-ICP
+WORKDIR /ros2_ws/src
+RUN git clone --depth 1 https://github.com/PRBonn/kiss-icp.git
+
+WORKDIR /ros2_ws
+RUN apt-get update && \
+    rosdep install --from-paths src --ignore-src -r -y && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+RUN echo '#!/bin/bash\nsource /opt/ros/jazzy/setup.bash\nif [ -f /ros2_ws/install/setup.bash ]; then source /ros2_ws/install/setup.bash; fi\nexec "$@"' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
+CMD ["ros2", "launch", "kiss_icp", "odometry.launch.py", "topic:=/ouster/points"]

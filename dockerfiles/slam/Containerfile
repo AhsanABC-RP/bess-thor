@@ -1,0 +1,58 @@
+# BESS SLAM Container - FAST_LIO_MULTI with CUDA acceleration
+# Dual LiDAR SLAM for mobile mapping
+# Build: podman build -t localhost/bess-slam:humble -f Containerfile .
+
+FROM localhost/bess-base:humble
+
+# Install SLAM dependencies
+RUN apt-get update && apt-get install -y \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libatlas-base-dev \
+    libsuitesparse-dev \
+    libomp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Livox SDK (for FAST-LIO compatibility)
+WORKDIR /tmp
+RUN git clone --depth 1 https://github.com/Livox-SDK/Livox-SDK2.git && \
+    cd Livox-SDK2 && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /tmp/Livox-SDK2
+
+# Clone FAST_LIO packages
+WORKDIR /ros2_ws/src
+
+# FAST-LIO2 for ROS2 (multi-lidar fork)
+RUN git clone --depth 1 https://github.com/Ericsii/FAST_LIO.git fast_lio && \
+    cd fast_lio && git checkout ros2
+
+# livox_ros2_driver (required dependency)
+RUN git clone --depth 1 https://github.com/Livox-SDK/livox_ros2_driver.git
+
+# ikd-Tree (required for FAST-LIO)
+RUN git clone --depth 1 https://github.com/hku-mars/ikd-Tree.git
+
+# Build workspace
+WORKDIR /ros2_ws
+RUN apt-get update && \
+    rosdep install --from-paths src --ignore-src -r -y && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --symlink-install \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc"
+
+# Copy launch file
+COPY launch_fast_lio.py /ros2_ws/launch_fast_lio.py
+
+# Environment for GPU
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Default command
+CMD ["ros2", "launch", "/ros2_ws/launch_fast_lio.py"]

@@ -1,0 +1,20 @@
+# FLIR Camera Parameters
+camera1:
+  camera_driver:
+    ros__parameters:
+      serial_number: ""
+      frame_id: "camera1_optical_frame"
+      compute_brightness: true
+      gain_auto: "Continuous"
+      exposure_auto: "Continuous"
+      frame_rate: 30.0
+
+camera2:
+  camera_driver:
+    ros__parameters:
+      serial_number: ""
+      frame_id: "camera2_optical_frame"
+      compute_brightness: true
+      gain_auto: "Continuous"
+      exposure_auto: "Continuous"
+      frame_rate: 30.0
