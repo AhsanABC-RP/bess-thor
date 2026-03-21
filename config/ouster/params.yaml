@@ -1,35 +1,52 @@
-# Ouster LiDAR Parameters - Thor Dev Kit
-# Sensor: OS1 SN:122310001278 at 169.254.70.119
+# BESS Ouster LiDAR Parameters
+# Dual Ouster OS1-128 or OS2-128 configuration
 
-ouster/os_driver:
+/**:
   ros__parameters:
-    sensor_hostname: '169.254.70.119'
-    timestamp_mode: 'TIME_FROM_ROS_TIME'
-    lidar_mode: '1024x10'  # 1024 columns @ 10Hz
-    lidar_port: 0
-    imu_port: 0
+    # Sensor hostname/IP
+    sensor_hostname: "169.254.70.119"
 
-    # Frames
-    sensor_frame: os_sensor
-    lidar_frame: os_lidar
-    imu_frame: os_imu
-    point_cloud_frame: os_lidar
-    pub_static_tf: true
+    # Sensor configuration
+    lidar_mode: "2048x10"           # 2048 columns × 128 beams × 10Hz = 262K pts/scan (survey density)
+    timestamp_mode: "TIME_FROM_PTP_1588"  # PTP synchronized timestamps
+    ptp_utc_tai_offset: -37.0       # UTC to TAI offset (update as needed)
 
-    # Reduce processing load - only essential processors
-    # Remove IMG to reduce CPU load (was IMU|PCL|SCAN|IMG)
-    proc_mask: IMU|PCL|SCAN
+    # IMU settings
+    imu_port: 7502
+    lidar_port: 7501
 
-    # Use simpler point type for faster processing
-    point_type: xyzi
+    # Frame IDs (overridden per-sensor in launch file)
+    sensor_frame: "os_sensor"
+    lidar_frame: "os_lidar"
+    imu_frame: "os_imu"
 
-    # Keep organized for faster access
-    organized: true
-    destagger: true
+    # Operating mode
+    operating_mode: "NORMAL"
 
-    # Use system default QoS for larger buffers
-    use_system_default_qos: true
+    # Signal multiplier (for long-range outdoor use)
+    signal_multiplier: 1
 
-    # Range limits
-    min_range: 0.5
-    max_range: 120.0
+    # Azimuth window (full 360 degrees)
+    azimuth_window_start: 0
+    azimuth_window_end: 360000      # millidegrees
+
+    # Point cloud processing
+    proc_mask: "IMG|PCL|IMU"        # Enable image, pointcloud, and IMU
+    scan_ring: 0                     # Process all rings
+
+    # Metadata
+    persist_config: false           # Don't persist to sensor EEPROM
+
+    # Timeouts
+    connection_timeout_sec: 30.0
+    data_timeout_sec: 5.0
+
+    # Multi-return (if supported)
+    return_profile: "SINGLE_RETURN"
+
+    # Point cloud output settings
+    use_system_default_qos: false
+    point_type: "native"            # native, xyz, xyzi, xyzir
+
+    # Diagnostics
+    diag_period: 1.0                # Diagnostic update period in seconds

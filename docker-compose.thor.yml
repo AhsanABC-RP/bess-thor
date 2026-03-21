@@ -46,7 +46,7 @@ services:
     image: localhost/bess-ouster:jazzy
     container_name: ouster
     volumes:
-      - ./config/ouster_params.yaml:/params.yaml:ro
+      - ./config/ouster/params.yaml:/params.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
     command:
