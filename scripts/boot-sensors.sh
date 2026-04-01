@@ -50,30 +50,30 @@ LOG "=== STEP 2: MikroTik Switch ==="
 
 MKTK="sshpass -p '8RKUP2PUT9' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 admin@169.254.100.254"
 
-# Wait for MikroTik
-for i in $(seq 1 10); do
+# Wait for MikroTik (boots slower than Thor — up to 90s)
+for i in $(seq 1 30); do
     if ping -c1 -W1 169.254.100.254 >/dev/null 2>&1; then
-        LOG "MikroTik reachable"
+        LOG "MikroTik reachable after ${i}x3s"
         break
     fi
-    LOG "Waiting for MikroTik... ($i)"
+    [ $((i % 5)) -eq 0 ] && LOG "Waiting for MikroTik... (${i}/30)"
     sleep 3
 done
 
 if ! ping -c1 -W1 169.254.100.254 >/dev/null 2>&1; then
-    LOG "ERROR: MikroTik not reachable at 169.254.100.254"
-    exit 1
+    LOG "WARN: MikroTik not reachable — skipping switch config"
 fi
 
-# Configure MikroTik ports
-eval $MKTK '"
-/interface bridge set bridgeLocal protocol-mode=none mtu=9000
-/interface ethernet set sfp28-16 auto-negotiation=no speed=10G-baseCR fec-mode=off
-/interface ethernet set sfp28-2 auto-negotiation=no speed=1G-baseT-full
-/interface ethernet set sfp28-4 auto-negotiation=yes speed=10G-baseT
-"' 2>/dev/null
-
-LOG "MikroTik configured: bridge mtu=9000, sfp28-16=10G, sfp28-2=1G"
+# Configure MikroTik ports (only if reachable)
+if ping -c1 -W1 169.254.100.254 >/dev/null 2>&1; then
+    eval $MKTK '"
+    /interface bridge set bridgeLocal protocol-mode=none mtu=9000
+    /interface ethernet set sfp28-16 auto-negotiation=no speed=10G-baseCR fec-mode=off
+    /interface ethernet set sfp28-2 auto-negotiation=no speed=1G-baseT-full
+    /interface ethernet set sfp28-4 auto-negotiation=yes speed=10G-baseT
+    "' 2>/dev/null
+    LOG "MikroTik configured: bridge mtu=9000, sfp28-16=10G, sfp28-2=1G, sfp28-4=10G"
+fi
 
 # ============================================================
 # STEP 3: FS Switch A70 Port Fix
@@ -104,7 +104,8 @@ fi
 # STEP 5: Discover Sensors
 # ============================================================
 LOG "=== STEP 5: Sensor Discovery ==="
-sleep 5  # Let cameras finish booting
+LOG "Waiting 60s for cameras to boot..."
+sleep 60
 
 # Aravis scan
 LOG "Aravis scan:"
