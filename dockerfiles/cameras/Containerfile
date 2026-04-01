@@ -28,10 +28,11 @@ RUN apt-get update && apt-get install -y \
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
-# Install ROS2 Humble + camera packages
+# Install ROS2 Humble + camera packages + CycloneDDS for large message support
 RUN apt-get update && apt-get install -y \
     ros-humble-ros-base \
     ros-humble-rmw-fastrtps-cpp \
+    ros-humble-rmw-cyclonedds-cpp \
     ros-humble-image-transport \
     ros-humble-compressed-image-transport \
     ros-humble-cv-bridge \
@@ -108,9 +109,9 @@ RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
 # Copy launch file
 COPY launch_dual_cameras.py /ros2_ws/launch_dual_cameras.py
 
-# Environment
+# Environment - CycloneDDS handles large images better than FastRTPS
 ENV ROS_DOMAIN_ID=0
-ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
 # Entrypoint
 RUN echo '#!/bin/bash\nsource /opt/ros/humble/setup.bash\nif [ -f /ros2_ws/install/setup.bash ]; then source /ros2_ws/install/setup.bash; fi\nexec "$@"' > /entrypoint.sh && \

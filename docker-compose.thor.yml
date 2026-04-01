@@ -130,7 +130,8 @@ services:
       - |
         source /opt/ros/humble/setup.bash
         source /ros2_ws/install/setup.bash
-        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[thermal1] Starting A6701 #1 (MAC 00:11:1c:05:8f:20)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
@@ -163,7 +164,8 @@ services:
       - |
         source /opt/ros/humble/setup.bash
         source /ros2_ws/install/setup.bash
-        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[thermal2] Starting A6701 #2 (MAC 00:11:1c:05:8f:27)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
@@ -199,7 +201,8 @@ services:
       - |
         source /opt/ros/humble/setup.bash
         source /ros2_ws/install/setup.bash
-        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[thermal3] Starting A70 #1 (MAC 00:40:7f:04:fa:7b)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
@@ -233,7 +236,8 @@ services:
       - |
         source /opt/ros/humble/setup.bash
         source /ros2_ws/install/setup.bash
-        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[thermal4] Starting A70 #2 (MAC 00:40:7f:10:a2:bc)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
@@ -277,7 +281,9 @@ services:
             -p camera_name:=lucid1 \
             -p frame_id:=lucid1_optical_frame \
             -p fps:=5.0 \
-            -p binning:=4 || true
+            -p binning:=4 \
+            -p exposure_us:=-1.0 \
+            -p gain_db:=-1.0 || true
           echo "[lucid1] Exited, restarting in 5s..."
           sleep 5
         done
@@ -291,11 +297,53 @@ services:
       - dev
       - full
 
-  # lucid2 - Second Atlas when it arrives
-  # lucid2:
-  #   <<: *common
-  #   image: localhost/bess-lucid:jazzy
-  #   ...
+  lucid2:
+    <<: *common
+    image: localhost/bess-lucid:jazzy
+    container_name: lucid2
+    volumes:
+      - ./containers/lucid/lucid_node.py:/ros2_ws/lucid_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash 2>/dev/null || true
+        while true; do
+          echo "[lucid2] Starting Lucid Atlas #2..."
+          python3 /ros2_ws/lucid_node.py --ros-args \
+            -p camera_ip:=169.254.206.169 \
+            -p camera_name:=lucid2 \
+            -p frame_id:=lucid2_optical_frame \
+            -p fps:=5.0 \
+            -p binning:=4 \
+            -p exposure_us:=-1.0 \
+            -p gain_db:=-1.0 || true
+          echo "[lucid2] Exited, restarting in 5s..."
+          sleep 5
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /lucid2/camera_driver/image_raw >/dev/null 2>&1"]
+    profiles:
+      - lucid
+      - rgb
+      - sensors
+      - dev
+      - full
+
+  compress-lucid2:
+    <<: *common
+    image: localhost/bess-lucid:jazzy
+    container_name: compress-lucid2
+    volumes:
+      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/lucid2/camera_driver/image_raw -p output_topic:=/lucid2/camera_driver/image_raw/compressed"]
+    profiles: [lucid, rgb, sensors, dev, full]
 
   # ===========================================================================
   # SENSORS - Blackfly S (via Spinnaker)
@@ -314,14 +362,16 @@ services:
       - |
         source /opt/ros/humble/setup.bash
         source /ros2_ws/install/setup.bash
-        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[blackfly1] Starting Blackfly S #1 (MAC 2c:dd:a3:7e:96:75)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
             -r __ns:=/blackfly/camera1 \
             -p frame_id:=blackfly1_optical_frame \
             -p camera_mac:=2c:dd:a3:7e:96:75 \
-            -p frame_rate:=4.0 || true
+            -p frame_rate:=5.0 \
+            -p packet_size:=1400 || true
           echo "[blackfly1] Exited, restarting in 5s..."
           sleep 5
         done
@@ -349,7 +399,8 @@ services:
       - |
         source /opt/ros/humble/setup.bash
         source /ros2_ws/install/setup.bash
-        export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[blackfly2] Starting Blackfly S #2 (MAC 2c:dd:a3:7e:96:76)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
@@ -379,7 +430,6 @@ services:
     container_name: compress-thermal1
     environment:
       <<: *common-env
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     volumes:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
@@ -393,7 +443,6 @@ services:
     container_name: compress-thermal2
     environment:
       <<: *common-env
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     volumes:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
@@ -407,7 +456,6 @@ services:
     container_name: compress-thermal3
     environment:
       <<: *common-env
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     volumes:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
@@ -421,7 +469,6 @@ services:
     container_name: compress-thermal4
     environment:
       <<: *common-env
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     volumes:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
@@ -446,7 +493,6 @@ services:
     container_name: compress-blackfly1
     environment:
       <<: *common-env
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     volumes:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
@@ -460,7 +506,6 @@ services:
     container_name: compress-blackfly2
     environment:
       <<: *common-env
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     volumes:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
@@ -501,12 +546,13 @@ services:
     container_name: foxglove
     volumes:
       - ./config/certs:/certs:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
     environment:
       <<: *common-env
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
     command: >
       bash -c "source /opt/ros/jazzy/setup.bash &&
-               export RMW_IMPLEMENTATION=rmw_fastrtps_cpp &&
+               export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp &&
+               export CYCLONEDDS_URI=file:///config/cyclonedds.xml &&
                ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765 tls:=true certfile:=/certs/cert.pem keyfile:=/certs/key.pem"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765"]

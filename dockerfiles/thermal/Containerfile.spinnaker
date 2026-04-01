@@ -1,0 +1,109 @@
+# BESS Thermal Camera Driver (A6701) - Spinnaker SDK
+# The FLIR A6701 (Xsc Series) requires Spinnaker - Aravis cannot stream from it.
+#
+# Build:
+#   docker build -t localhost/bess-thermal-spinnaker:jazzy \
+#     -f Containerfile.spinnaker .
+#
+# Requires: spinnaker debs and PySpin wheel in build context
+
+FROM localhost/bess-cameras:jazzy
+
+LABEL maintainer="Thor Dev Kit"
+LABEL description="FLIR A6701 thermal camera driver using Spinnaker SDK"
+
+# Install spinupdate (required by PySpin) and numpy
+COPY spinnaker-debs/spinupdate_4.3.0.189_arm64.deb /tmp/
+RUN dpkg -i /tmp/spinupdate_4.3.0.189_arm64.deb && rm /tmp/*.deb
+
+# Install PySpin (pin numpy to avoid conflict with system numpy)
+COPY spinnaker-debs/spinnaker_python-4.3.0.189-cp310-cp310-linux_aarch64.whl /tmp/
+RUN pip3 install "numpy>=1.22,<2" && \
+    pip3 install --no-deps /tmp/spinnaker_python-4.3.0.189-cp310-cp310-linux_aarch64.whl \
+    && rm /tmp/*.whl
+
+# Ensure Spinnaker libs are on the linker path
+RUN echo '/opt/spinnaker/lib' > /etc/ld.so.conf.d/spinnaker.conf && ldconfig
+
+# Install CycloneDDS (base image was built before this package was added)
+RUN apt-get update && apt-get install -y ros-humble-rmw-cyclonedds-cpp && rm -rf /var/lib/apt/lists/*
+
+# Set CycloneDDS as default RMW (handles large images better than FastRTPS)
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+# Create workspace for thermal camera node
+WORKDIR /ros2_ws/src
+
+# Create thermal_camera package structure
+RUN mkdir -p thermal_camera/thermal_camera \
+    && mkdir -p thermal_camera/launch \
+    && mkdir -p thermal_camera/resource \
+    && touch thermal_camera/resource/thermal_camera \
+    && touch thermal_camera/thermal_camera/__init__.py
+
+# Copy the Spinnaker-based thermal camera node
+COPY thermal_spinnaker_node.py /ros2_ws/src/thermal_camera/thermal_camera/
+
+# Create package.xml
+RUN printf '%s\n' \
+    '<?xml version="1.0"?>' \
+    '<package format="3">' \
+    '  <name>thermal_camera</name>' \
+    '  <version>1.0.0</version>' \
+    '  <description>FLIR A6701 thermal camera driver using Spinnaker</description>' \
+    '  <maintainer email="dev@thor.local">Thor Dev</maintainer>' \
+    '  <license>MIT</license>' \
+    '  <buildtool_depend>ament_python</buildtool_depend>' \
+    '  <exec_depend>rclpy</exec_depend>' \
+    '  <exec_depend>sensor_msgs</exec_depend>' \
+    '  <exec_depend>std_msgs</exec_depend>' \
+    '  <export>' \
+    '    <build_type>ament_python</build_type>' \
+    '  </export>' \
+    '</package>' \
+    > /ros2_ws/src/thermal_camera/package.xml
+
+# Create setup.py
+RUN printf '%s\n' \
+    'from setuptools import setup' \
+    '' \
+    "package_name = 'thermal_camera'" \
+    '' \
+    'setup(' \
+    '    name=package_name,' \
+    "    version='1.0.0'," \
+    '    packages=[package_name],' \
+    '    data_files=[' \
+    "        ('share/ament_index/resource_index/packages'," \
+    "            ['resource/' + package_name])," \
+    "        ('share/' + package_name, ['package.xml'])," \
+    '    ],' \
+    "    install_requires=['setuptools']," \
+    '    zip_safe=True,' \
+    "    maintainer='Thor Dev'," \
+    "    maintainer_email='dev@thor.local'," \
+    "    description='FLIR A6701 thermal camera driver using Spinnaker'," \
+    "    license='MIT'," \
+    '    entry_points={' \
+    "        'console_scripts': [" \
+    "            'thermal_spinnaker_node = thermal_camera.thermal_spinnaker_node:main'," \
+    '        ],' \
+    '    },' \
+    ')' \
+    > /ros2_ws/src/thermal_camera/setup.py
+
+# Create setup.cfg
+RUN printf '%s\n' \
+    '[develop]' \
+    'script_dir=$base/lib/thermal_camera' \
+    '[install]' \
+    'install_scripts=$base/lib/thermal_camera' \
+    > /ros2_ws/src/thermal_camera/setup.cfg
+
+# Build the workspace
+WORKDIR /ros2_ws
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --packages-select thermal_camera --symlink-install"
+
+# Default command
+CMD ["bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && ros2 run thermal_camera thermal_spinnaker_node"]

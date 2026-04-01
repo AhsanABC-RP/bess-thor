@@ -2,3 +2,4 @@ config/certs/
 data/
 *.pyc
 __pycache__/
+dockerfiles/thermal/spinnaker-debs/

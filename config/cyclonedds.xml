@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain>
+    <General>
+      <!-- Max DDSI message size = max UDP payload.
+           12.58MB PointCloud2 / 65500B = ~192 DDSI fragments (was ~9000 at default 14720B).
+           Fewer DDSI fragments = dramatically less loss from IP-level fragmentation.
+           On loopback (MTU 65536) this fits in a single IP datagram per DDSI fragment. -->
+      <MaxMessageSize>8900B</MaxMessageSize>
+      <FragmentSize>8800B</FragmentSize>
+
+      <!-- Disable multicast for data — unicast only.
+           Multiple subscribers (GLIM, FAST-LIO, recorder, extraction) on the same host
+           cause multicast packet duplication and drops. Keep SPDP multicast for discovery. -->
+      <AllowMulticast>spdp</AllowMulticast>
+    </General>
+
+    <Internal>
+      <!-- 64MB receive buffer — required for 12.58MB point clouds at 10Hz.
+           Without this, kernel socket buffers overflow (RcvbufErrors)
+           causing fragment loss and bursty DDS delivery. -->
+      <SocketReceiveBufferSize min="64MiB" />
+      <SocketSendBufferSize min="8MiB" />
+
+      <!-- Defrag slots for BEST_EFFORT data (default=4).
+           With 4+ concurrent PointCloud2 subscribers, default 4 slots causes
+           fragment eviction before reassembly completes. 32 gives plenty of headroom. -->
+      <DefragUnreliableMaxSamples>64</DefragUnreliableMaxSamples>
+
+      <!-- Max samples waiting for missing fragments before eviction (default=16).
+           Increase to handle burst losses without dropping entire messages. -->
+      <DefragReliableMaxSamples>64</DefragReliableMaxSamples>
+    </Internal>
+  </Domain>
+</CycloneDDS>
