@@ -114,14 +114,8 @@ class ThermalSpinnakerNode(Node):
             if self.system is None:
                 self.system = PySpin.System.GetInstance()
 
-            # Use interface-specific enumeration to avoid multi-NIC confusion
-            sensor_iface = self._find_sensor_interface()
-            if sensor_iface is not None:
-                self.get_logger().info('Using sensor interface for camera discovery')
-                cam_list = sensor_iface.GetCameras()
-            else:
-                self.get_logger().warn('No 169.254.x.x interface found, using global discovery')
-                cam_list = self.system.GetCameras()
+            # Global discovery — find cameras on all interfaces, filter by MAC
+            cam_list = self.system.GetCameras()
 
             n_cams = cam_list.GetSize()
             self.get_logger().info(f'Spinnaker found {n_cams} camera(s)')

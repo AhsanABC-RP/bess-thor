@@ -79,6 +79,10 @@ class GpuCompressNode(Node):
             elif msg.encoding == 'mono8':
                 img = np.frombuffer(msg.data, dtype=np.uint8).reshape(
                     msg.height, msg.width)
+            elif msg.encoding == 'mono16':
+                img16 = np.frombuffer(msg.data, dtype=np.uint16).reshape(
+                    msg.height, msg.width)
+                img = (img16 / 256).astype(np.uint8)
             else:
                 self.get_logger().warn(f'Unsupported encoding: {msg.encoding}')
                 return

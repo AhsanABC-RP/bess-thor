@@ -41,6 +41,11 @@ sysctl -w net.ipv4.ipfrag_high_thresh=26000000 >/dev/null
 sysctl -w net.ipv4.ipfrag_low_thresh=13000000 >/dev/null
 sysctl -w net.ipv4.udp_rmem_min=262144 >/dev/null
 
+# Disable enP2p1s0 — NetworkManager gives it duplicate 169.254.x.x which breaks GigE Vision discovery
+nmcli device set enP2p1s0 managed no 2>/dev/null || true
+ip addr flush dev enP2p1s0 2>/dev/null
+ip link set enP2p1s0 down 2>/dev/null
+
 LOG "Host network: OK (MTU=$(ip link show $IFACE | grep -oP 'mtu \K[0-9]+'))"
 
 # ============================================================

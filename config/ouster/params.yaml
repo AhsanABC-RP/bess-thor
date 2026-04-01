@@ -46,7 +46,7 @@
 
     # Point cloud output settings
     use_system_default_qos: false
-    point_type: "native"            # native, xyz, xyzi, xyzir
+    point_type: "original"           # Full fields: x,y,z,intensity,t,reflectivity,ring,ambient,range
 
     # Diagnostics
     diag_period: 1.0                # Diagnostic update period in seconds
