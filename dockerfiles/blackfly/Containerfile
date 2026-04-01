@@ -1,0 +1,31 @@
+# BESS Blackfly S C++ Driver — zero-copy GigE streaming
+# Built on bess-thermal-spinnaker which has Spinnaker SDK + CycloneDDS
+#
+# Build: docker build --network host -t localhost/bess-blackfly:humble \
+#          -f Containerfile .
+
+FROM localhost/bess-thermal-spinnaker:jazzy
+
+# Install build dependencies for flir_camera_driver
+RUN apt-get update && apt-get install -y \
+    ros-humble-image-transport \
+    ros-humble-camera-info-manager \
+    ros-humble-diagnostic-updater \
+    ros-humble-rclcpp-components \
+    ros-humble-yaml-cpp-vendor \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build the C++ spinnaker_camera_driver
+WORKDIR /ros2_ws/src
+RUN rm -rf flir_camera_driver && \
+    git clone --branch humble-devel --depth 1 \
+    https://github.com/ros-drivers/flir_camera_driver.git
+
+WORKDIR /ros2_ws
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --packages-select spinnaker_camera_driver \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release -DSPINNAKER_INCLUDE_DIR=/opt/spinnaker/include -DSPINNAKER_LIB=/opt/spinnaker/lib/libSpinnaker.so"
+
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+CMD ["bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch spinnaker_camera_driver driver_node.launch.py"]

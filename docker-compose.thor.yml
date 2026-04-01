@@ -239,11 +239,11 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[thermal4] Starting A70 #2 (MAC 00:40:7f:10:a2:bc)..."
+          echo "[thermal4] Starting A70 #2 (MAC 00:40:7f:11:04:ea)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
             -r __ns:=/thermal/camera4 \
             -p frame_id:=thermal4_optical_frame \
-            -p camera_mac:=00:40:7f:10:a2:bc \
+            -p camera_mac:=00:40:7f:11:04:ea \
             -p frame_rate:=15.0 || true
           echo "[thermal4] Exited, restarting in 5s..."
           sleep 5
@@ -350,12 +350,10 @@ services:
   # ===========================================================================
   blackfly1:
     <<: *common
-    image: localhost/bess-thermal-spinnaker:jazzy
+    image: localhost/bess-blackfly:humble
     container_name: blackfly1
     volumes:
-      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
-      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
     command:
       - bash
       - -c
@@ -365,13 +363,14 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[blackfly1] Starting Blackfly S #1 (MAC 2c:dd:a3:7e:96:75)..."
-          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
-            -r __ns:=/blackfly/camera1 \
-            -p frame_id:=blackfly1_optical_frame \
-            -p camera_mac:=2c:dd:a3:7e:96:75 \
-            -p frame_rate:=5.0 \
-            -p packet_size:=1400 || true
+          echo "[blackfly1] Starting C++ driver (SN 25073269)..."
+          ros2 launch spinnaker_camera_driver driver_node.launch.py \
+            camera_type:=blackfly_s \
+            serial:="'25073269'" \
+            frame_rate_auto:=Off \
+            acquisition_frame_rate:=5.0 \
+            pixel_format:=Mono16 \
+            --ros-args -r __ns:=/blackfly/camera1 || true
           echo "[blackfly1] Exited, restarting in 5s..."
           sleep 5
         done
@@ -387,12 +386,10 @@ services:
 
   blackfly2:
     <<: *common
-    image: localhost/bess-thermal-spinnaker:jazzy
+    image: localhost/bess-blackfly:humble
     container_name: blackfly2
     volumes:
-      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
-      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
     command:
       - bash
       - -c
@@ -402,12 +399,14 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[blackfly2] Starting Blackfly S #2 (MAC 2c:dd:a3:7e:96:76)..."
-          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
-            -r __ns:=/blackfly/camera2 \
-            -p frame_id:=blackfly2_optical_frame \
-            -p camera_mac:=2c:dd:a3:7e:96:76 \
-            -p frame_rate:=4.0 || true
+          echo "[blackfly2] Starting C++ driver (SN 25073270)..."
+          ros2 launch spinnaker_camera_driver driver_node.launch.py \
+            camera_type:=blackfly_s \
+            serial:="'25073270'" \
+            frame_rate_auto:=Off \
+            acquisition_frame_rate:=5.0 \
+            pixel_format:=Mono16 \
+            --ros-args -r __ns:=/blackfly/camera2 || true
           echo "[blackfly2] Exited, restarting in 5s..."
           sleep 5
         done

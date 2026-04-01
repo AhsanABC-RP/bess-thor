@@ -6,8 +6,8 @@
            12.58MB PointCloud2 / 65500B = ~192 DDSI fragments (was ~9000 at default 14720B).
            Fewer DDSI fragments = dramatically less loss from IP-level fragmentation.
            On loopback (MTU 65536) this fits in a single IP datagram per DDSI fragment. -->
-      <MaxMessageSize>8900B</MaxMessageSize>
-      <FragmentSize>8800B</FragmentSize>
+      <MaxMessageSize>65500B</MaxMessageSize>
+      <FragmentSize>65000B</FragmentSize>
 
       <!-- Disable multicast for data — unicast only.
            Multiple subscribers (GLIM, FAST-LIO, recorder, extraction) on the same host

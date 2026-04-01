@@ -38,6 +38,7 @@ class ThermalSpinnakerNode(Node):
         self.declare_parameter('packet_size', 1400)
         self.declare_parameter('reconnect_interval', 5.0)
         self.declare_parameter('binning', 1)
+        self.declare_parameter('pixel_format', 'Mono16')
 
         self.frame_id = self.get_parameter('frame_id').value
         self.target_fps = self.get_parameter('frame_rate').value
@@ -47,6 +48,7 @@ class ThermalSpinnakerNode(Node):
         self.packet_size = self.get_parameter('packet_size').value
         self.reconnect_interval = self.get_parameter('reconnect_interval').value
         self.binning = self.get_parameter('binning').value
+        self.pixel_format = self.get_parameter('pixel_format').value
 
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -262,12 +264,22 @@ class ThermalSpinnakerNode(Node):
         except PySpin.SpinnakerException as e:
             self.get_logger().error(f'FAILED to set packet size: {e}')
 
-        # Set GevSCPD (inter-packet delay) to reduce burst traffic
+        # Set DeviceLinkThroughputLimit to max (125 MB/s for GigE)
+        try:
+            dltl = PySpin.CIntegerPtr(nodemap.GetNode('DeviceLinkThroughputLimit'))
+            if dltl.IsValid() and PySpin.IsWritable(dltl):
+                old_tl = dltl.GetValue()
+                dltl.SetValue(125000000)  # 125 MB/s = full GigE
+                self.get_logger().info(f'Set DeviceLinkThroughputLimit: {old_tl} -> 125000000')
+        except PySpin.SpinnakerException as e:
+            self.get_logger().warn(f'Could not set DeviceLinkThroughputLimit: {e}')
+
+        # Set GevSCPD (inter-packet delay) — 0 for max throughput on dedicated link
         try:
             scpd = PySpin.CIntegerPtr(nodemap.GetNode('GevSCPD'))
             if scpd.IsValid() and PySpin.IsWritable(scpd):
-                scpd.SetValue(2000)
-                self.get_logger().info('Set GevSCPD=2000 (inter-packet delay)')
+                scpd.SetValue(0)
+                self.get_logger().info('Set GevSCPD=0 (max throughput)')
         except PySpin.SpinnakerException as e:
             self.get_logger().warn(f'Could not set GevSCPD: {e}')
 
@@ -300,14 +312,14 @@ class ThermalSpinnakerNode(Node):
         except PySpin.SpinnakerException as e:
             self.get_logger().warn(f'Could not set binning: {e}')
 
-        # Set PixelFormat to Mono16
+        # Set PixelFormat
         try:
             pf = PySpin.CEnumerationPtr(nodemap.GetNode('PixelFormat'))
             if pf.IsValid() and PySpin.IsWritable(pf):
-                mono16 = pf.GetEntryByName('Mono16')
-                if mono16 is not None and PySpin.IsReadable(mono16):
-                    pf.SetIntValue(mono16.GetValue())
-                    self.get_logger().info('Set PixelFormat=Mono16')
+                entry = pf.GetEntryByName(self.pixel_format)
+                if entry is not None and PySpin.IsReadable(entry):
+                    pf.SetIntValue(entry.GetValue())
+                    self.get_logger().info(f'Set PixelFormat={self.pixel_format}')
         except PySpin.SpinnakerException as e:
             self.get_logger().warn(f'Could not set PixelFormat: {e}')
 
@@ -433,9 +445,13 @@ class ThermalSpinnakerNode(Node):
             msg.header.frame_id = self.frame_id
             msg.height = height
             msg.width = width
-            msg.encoding = 'mono16'
+            if self.pixel_format == 'Mono8':
+                msg.encoding = 'mono8'
+                msg.step = width
+            else:
+                msg.encoding = 'mono16'
+                msg.step = width * 2
             msg.is_bigendian = False
-            msg.step = width * 2
             msg.data = img.tobytes()
             self.image_pub.publish(msg)
 
