@@ -1,9 +1,21 @@
 # MicroStrain GQ7 IMU Parameters
-# Connected via Moxa NPort 5210A serial-to-TCP gateway
+# Thor: Direct USB connection (no Moxa)
+# Main port: /dev/ttyACM0, Aux port: /dev/ttyACM1
 microstrain_imu:
   ros__parameters:
-    port: "tcp://192.168.127.254:4001"
+    port: "/dev/ttyACM0"
+    aux_port: "/dev/ttyACM1"
     baudrate: 115200
     imu_frame_id: "imu_link"
     publish_imu: true
     publish_mag: true
+    imu_data_rate: 100
+
+    # GNSS
+    publish_gnss1: true
+    publish_gnss2: true
+
+    # Filtered output
+    publish_filter: true
+    filter_odometry_earth_data_rate: 10
+    filter_odometry_map_data_rate: 10

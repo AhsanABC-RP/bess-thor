@@ -78,6 +78,9 @@ services:
     <<: *common
     image: localhost/bess-microstrain:jazzy
     container_name: microstrain
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+      - /dev/ttyACM1:/dev/ttyACM1
     volumes:
       - ./config:/ros2_ws/config:ro
       - ./config/microstrain/launch_imu.py:/ros2_ws/launch_imu.py:ro
@@ -87,22 +90,9 @@ services:
       - bash
       - -c
       - |
-        apt-get update && apt-get install -y socat >/dev/null 2>&1 || true
-        while true; do
-          echo "[microstrain] Creating socat bridge to Moxa..."
-          socat pty,link=/dev/microstrain,raw,echo=0,mode=666 tcp:192.168.127.254:4001 &
-          SOCAT_PID=$!
-          sleep 3
-          if [ -e /dev/microstrain ]; then
-            break
-          fi
-          echo "[microstrain] socat failed, retrying..."
-          kill $SOCAT_PID 2>/dev/null || true
-          sleep 5
-        done
         source /opt/ros/jazzy/setup.bash
         source /ros2_ws/install/setup.bash
-        exec ros2 launch /ros2_ws/launch_imu.py
+        exec ros2 launch /ros2_ws/launch_imu.py port:=/dev/ttyACM0 aux_port:=/dev/ttyACM1
     healthcheck:
       <<: *healthcheck-ros2
       test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /imu/data >/dev/null 2>&1"]
@@ -277,7 +267,7 @@ services:
         while true; do
           echo "[lucid1] Starting Lucid Atlas #1..."
           python3 /ros2_ws/lucid_node.py --ros-args \
-            -p camera_ip:=169.254.232.169 \
+            -p camera_ip:=169.254.20.23 \
             -p camera_name:=lucid1 \
             -p frame_id:=lucid1_optical_frame \
             -p fps:=5.0 \
@@ -314,7 +304,7 @@ services:
         while true; do
           echo "[lucid2] Starting Lucid Atlas #2..."
           python3 /ros2_ws/lucid_node.py --ros-args \
-            -p camera_ip:=169.254.206.169 \
+            -p camera_ip:=169.254.20.14 \
             -p camera_name:=lucid2 \
             -p frame_id:=lucid2_optical_frame \
             -p fps:=5.0 \
@@ -350,10 +340,9 @@ services:
   # ===========================================================================
   blackfly1:
     <<: *common
-    image: localhost/bess-thermal-spinnaker:jazzy
+    image: localhost/bess-blackfly:humble
     container_name: blackfly1
     volumes:
-      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
     command:
       - bash
@@ -364,19 +353,28 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[blackfly1] Starting Blackfly S #1 (SN 25073269)..."
-          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
-            -r __ns:=/blackfly/camera1 \
+          echo "[blackfly1] Starting Blackfly S #1 C++ driver (SN 25073269)..."
+          ros2 run spinnaker_camera_driver camera_driver_node --ros-args \
+            -r __node:=blackfly_camera -r __ns:=/blackfly/camera1 \
+            -p serial_number:="'25073269'" \
             -p frame_id:=blackfly1_optical_frame \
-            -p camera_mac:=2c:dd:a3:7e:96:75 \
+            -p parameter_file:=/ros2_ws/install/spinnaker_camera_driver/share/spinnaker_camera_driver/config/blackfly_s.yaml \
             -p frame_rate:=5.0 \
-            -p packet_size:=1400 || true
-          echo "[blackfly1] Exited, restarting in 5s..."
-          sleep 5
+            -p frame_rate_enable:=true \
+            -p frame_rate_auto:=Off \
+            -p exposure_auto:=Continuous \
+            -p gain_auto:=Continuous \
+            -p gev_scps_packet_size:=1400 \
+            -p buffer_queue_size:=10 \
+            -p trigger_mode:=Off \
+            -p adjust_timestamp:=true \
+            -p pixel_format:=Mono16 || true
+          echo "[blackfly1] Exited, restarting in 10s..."
+          sleep 10
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /blackfly/camera1/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && timeout 10 ros2 topic echo --once /blackfly/camera1/blackfly_camera/image_raw >/dev/null 2>&1"]
     profiles:
       - blackfly
       - rgb
@@ -386,10 +384,9 @@ services:
 
   blackfly2:
     <<: *common
-    image: localhost/bess-thermal-spinnaker:jazzy
+    image: localhost/bess-blackfly:humble
     container_name: blackfly2
     volumes:
-      - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
     command:
       - bash
@@ -400,19 +397,28 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[blackfly2] Starting Blackfly S #2 (SN 25073270)..."
-          python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
-            -r __ns:=/blackfly/camera2 \
+          echo "[blackfly2] Starting Blackfly S #2 C++ driver (SN 25073270)..."
+          ros2 run spinnaker_camera_driver camera_driver_node --ros-args \
+            -r __node:=blackfly_camera -r __ns:=/blackfly/camera2 \
+            -p serial_number:="'25073270'" \
             -p frame_id:=blackfly2_optical_frame \
-            -p camera_mac:=2c:dd:a3:7e:96:76 \
+            -p parameter_file:=/ros2_ws/install/spinnaker_camera_driver/share/spinnaker_camera_driver/config/blackfly_s.yaml \
             -p frame_rate:=5.0 \
-            -p packet_size:=1400 || true
-          echo "[blackfly2] Exited, restarting in 5s..."
-          sleep 5
+            -p frame_rate_enable:=true \
+            -p frame_rate_auto:=Off \
+            -p exposure_auto:=Continuous \
+            -p gain_auto:=Continuous \
+            -p gev_scps_packet_size:=1400 \
+            -p buffer_queue_size:=10 \
+            -p trigger_mode:=Off \
+            -p adjust_timestamp:=true \
+            -p pixel_format:=Mono16 || true
+          echo "[blackfly2] Exited, restarting in 10s..."
+          sleep 10
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /blackfly/camera2/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && timeout 10 ros2 topic echo --once /blackfly/camera2/blackfly_camera/image_raw >/dev/null 2>&1"]
     profiles:
       - blackfly
       - rgb
@@ -496,7 +502,7 @@ services:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera1/image_raw -p output_topic:=/blackfly/camera1/image_raw/compressed"]
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera1/blackfly_camera/image_raw -p output_topic:=/blackfly/camera1/image_raw/compressed"]
     profiles: [blackfly, rgb, sensors, dev, full]
 
   compress-blackfly2:
@@ -509,7 +515,7 @@ services:
       - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera2/image_raw -p output_topic:=/blackfly/camera2/image_raw/compressed"]
+    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera2/blackfly_camera/image_raw -p output_topic:=/blackfly/camera2/image_raw/compressed"]
     profiles: [blackfly, rgb, sensors, dev, full]
 
   # ===========================================================================

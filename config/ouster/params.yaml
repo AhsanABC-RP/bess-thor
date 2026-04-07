@@ -1,52 +1,18 @@
-# BESS Ouster LiDAR Parameters
-# Dual Ouster OS1-128 or OS2-128 configuration
-
-/**:
+ouster/os_driver:
   ros__parameters:
-    # Sensor hostname/IP
     sensor_hostname: "169.254.70.119"
-
-    # Sensor configuration
-    lidar_mode: "2048x10"           # 2048 columns × 128 beams × 10Hz = 262K pts/scan (survey density)
-    timestamp_mode: "TIME_FROM_PTP_1588"  # PTP synchronized timestamps
-    ptp_utc_tai_offset: -37.0       # UTC to TAI offset (update as needed)
-
-    # IMU settings
-    imu_port: 7502
+    lidar_mode: "2048x10"
+    timestamp_mode: "TIME_FROM_PTP_1588"
+    ptp_utc_tai_offset: -37.0
+    udp_profile_imu: "ACCEL32_GYRO32_NMEA"
+    imu_packets_per_frame: 8
+    gyro_fsr: "EXTENDED"
+    accel_fsr: "EXTENDED"
     lidar_port: 7501
-
-    # Frame IDs (overridden per-sensor in launch file)
-    sensor_frame: "os_sensor"
-    lidar_frame: "os_lidar"
-    imu_frame: "os_imu"
-
-    # Operating mode
-    operating_mode: "NORMAL"
-
-    # Signal multiplier (for long-range outdoor use)
-    signal_multiplier: 1
-
-    # Azimuth window (full 360 degrees)
-    azimuth_window_start: 0
-    azimuth_window_end: 360000      # millidegrees
-
-    # Point cloud processing
-    proc_mask: "IMG|PCL|IMU"        # Enable image, pointcloud, and IMU
-    scan_ring: 0                     # Process all rings
-
-    # Metadata
-    persist_config: false           # Don't persist to sensor EEPROM
-
-    # Timeouts
-    connection_timeout_sec: 30.0
-    data_timeout_sec: 5.0
-
-    # Multi-return (if supported)
-    return_profile: "SINGLE_RETURN"
-
-    # Point cloud output settings
+    imu_port: 7502
+    proc_mask: "IMU|PCL|IMG"
+    point_type: "original"
     use_system_default_qos: false
-    point_type: "original"           # Full fields: x,y,z,intensity,t,reflectivity,ring,ambient,range
-
-    # Diagnostics
-    diag_period: 1.0                # Diagnostic update period in seconds
+    persist_config: false
+    attempt_reconnect: true
+    dormant_period_between_reconnects: 5.0
