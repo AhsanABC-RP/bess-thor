@@ -616,6 +616,39 @@ services:
       - dev
 
   # ===========================================================================
+  # SLAM - DLIO (Direct LiDAR-Inertial Odometry)
+  # ===========================================================================
+  dlio:
+    <<: *common
+    image: localhost/bess-dlio:jazzy
+    container_name: dlio
+    volumes:
+      - ./config/dlio/dlio_thor.yaml:/ros2_ws/dlio_thor.yaml:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - /home/thor/recordings:/data:rw
+    command:
+      - bash
+      - -c
+      - |
+        apt-get update && apt-get install -y ros-jazzy-rmw-cyclonedds-cpp >/dev/null 2>&1 || true
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
+        echo "[dlio] Starting DLIO with Ouster OS1-128 + Ouster IMU..."
+        ros2 launch direct_lidar_inertial_odometry dlio.launch.py \
+          pointcloud_topic:=/ouster/points \
+          imu_topic:=/ouster/imu \
+          rviz:=false
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && timeout 5 ros2 topic echo --once /dlio/odom_node/odom >/dev/null 2>&1"]
+    profiles:
+      - slam
+      - dlio
+      - full
+
+  # ===========================================================================
   # RECORDING
   # ===========================================================================
   recorder:
@@ -640,34 +673,66 @@ services:
           --storage mcap \
           --qos-profile-overrides-path /rosbag_qos.yaml \
           --max-cache-size 500000000 \
+          --max-bag-size 50000000000 \
           /ouster/points \
           /ouster/imu \
           /ouster/metadata \
-          /ouster/nearir_image \
-          /ouster/reflec_image \
-          /ouster/signal_image \
-          /ouster/range_image \
-          /thermal/camera1/image_raw \
+          /thermal/camera1/image_raw/compressed \
           /thermal/camera1/camera_info \
-          /thermal/camera2/image_raw \
+          /thermal/camera2/image_raw/compressed \
           /thermal/camera2/camera_info \
-          /thermal/camera3/image_raw \
+          /thermal/camera3/image_raw/compressed \
           /thermal/camera3/camera_info \
-          /thermal/camera4/image_raw \
+          /thermal/camera4/image_raw/compressed \
           /thermal/camera4/camera_info \
-          /lucid1/camera_driver/image_raw \
+          /thermal/camera1/image_color \
+          /thermal/camera2/image_color \
+          /thermal/camera3/image_color \
+          /thermal/camera4/image_color \
+          /lucid1/camera_driver/image_raw/compressed \
           /lucid1/camera_driver/camera_info \
-          /lucid2/camera_driver/image_raw \
+          /lucid2/camera_driver/image_raw/compressed \
           /lucid2/camera_driver/camera_info \
-          /blackfly/camera1/blackfly_camera/image_raw \
+          /blackfly/camera1/blackfly_camera/image_raw/compressed \
           /blackfly/camera1/blackfly_camera/camera_info \
           /blackfly/camera1/blackfly_camera/meta \
-          /blackfly/camera2/blackfly_camera/image_raw \
+          /blackfly/camera2/blackfly_camera/image_raw/compressed \
           /blackfly/camera2/blackfly_camera/camera_info \
           /blackfly/camera2/blackfly_camera/meta \
           /imu/data \
+          /imu/mag \
+          /imu/pressure \
           /ekf/odometry_earth \
-          /mip/gnss_corrections/rtk_corrections_status \
+          /ekf/odometry_map \
+          /ekf/imu/data \
+          /ekf/llh_position \
+          /ekf/velocity \
+          /ekf/dual_antenna_heading \
+          /ekf/status \
+          /gnss_1/llh_position \
+          /gnss_1/velocity \
+          /gnss_1/odometry_earth \
+          /gnss_1/time \
+          /gnss_2/llh_position \
+          /gnss_2/velocity \
+          /gnss_2/odometry_earth \
+          /gnss_2/time \
+          /mip/ekf/status \
+          /mip/ekf/gnss_position_aiding_status \
+          /mip/ekf/gnss_dual_antenna_status \
+          /mip/ekf/aiding_measurement_summary \
+          /mip/gnss_1/fix_info \
+          /mip/gnss_2/fix_info \
+          /mip/sensor/overrange_status \
+          /mip/sensor/temperature_statistics \
+          /mip/system/built_in_test \
+          /mip/system/time_sync_status \
+          /dlio/odom_node/odom \
+          /dlio/odom_node/pose \
+          /dlio/odom_node/path \
+          /dlio/odom_node/pointcloud/deskewed \
+          /dlio/odom_node/pointcloud/keyframe \
+          /dlio/odom_node/keyframes \
           /tf \
           /tf_static
     profiles:

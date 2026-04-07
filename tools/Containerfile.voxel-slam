@@ -1,0 +1,38 @@
+FROM docker.io/ros:noetic-perception
+
+# System deps
+RUN apt-get update && apt-get install -y \
+    ros-noetic-pcl-ros \
+    ros-noetic-pcl-conversions \
+    ros-noetic-tf \
+    libeigen3-dev \
+    libpcl-dev \
+    cmake \
+    git \
+    libceres-dev \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# GTSAM 4.0.3
+RUN add-apt-repository ppa:borglab/gtsam-release-4.0 \
+    && apt-get update \
+    && apt-get install -y libgtsam-dev libgtsam-unstable-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Stub livox_ros_driver (Voxel-SLAM links it but we use Ouster)
+RUN mkdir -p /catkin_ws/src/livox_ros_driver/include \
+    && mkdir -p /catkin_ws/src/livox_ros_driver/msg \
+    && echo 'cmake_minimum_required(VERSION 3.0.2)\nproject(livox_ros_driver)\nfind_package(catkin REQUIRED COMPONENTS std_msgs message_generation)\nadd_message_files(FILES CustomMsg.msg CustomPoint.msg)\ngenerate_messages(DEPENDENCIES std_msgs)\ncatkin_package(CATKIN_DEPENDS message_runtime std_msgs)' > /catkin_ws/src/livox_ros_driver/CMakeLists.txt \
+    && echo '<?xml version="1.0"?><package format="2"><name>livox_ros_driver</name><version>0.0.0</version><description>stub</description><maintainer email="stub@stub.com">stub</maintainer><license>MIT</license><buildtool_depend>catkin</buildtool_depend><build_depend>std_msgs</build_depend><build_depend>message_generation</build_depend><exec_depend>message_runtime</exec_depend><exec_depend>std_msgs</exec_depend></package>' > /catkin_ws/src/livox_ros_driver/package.xml \
+    && echo 'Header header\nuint64 timebase\nuint32 point_num\nuint8 lidar_id\nuint8[3] rsvd\nCustomPoint[] points' > /catkin_ws/src/livox_ros_driver/msg/CustomMsg.msg \
+    && echo 'uint32 offset_time\nfloat32 x\nfloat32 y\nfloat32 z\nuint8 reflectivity\nuint8 tag\nuint8 line' > /catkin_ws/src/livox_ros_driver/msg/CustomPoint.msg
+
+# Copy Voxel-SLAM source
+COPY Voxel-SLAM/VoxelSLAM /catkin_ws/src/voxel_slam
+
+# Build
+WORKDIR /catkin_ws
+RUN bash -c "source /opt/ros/noetic/setup.bash && catkin_make -DCMAKE_BUILD_TYPE=Release"
+
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/ros/noetic/setup.bash && source /catkin_ws/devel/setup.bash && exec \"$@\"", "--"]
+CMD ["bash"]
