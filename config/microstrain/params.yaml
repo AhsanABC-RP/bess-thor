@@ -7,15 +7,59 @@ microstrain_imu:
     aux_port: "/dev/ttyACM1"
     baudrate: 115200
     imu_frame_id: "imu_link"
-    publish_imu: true
-    publish_mag: true
+
+    # IMU data
     imu_data_rate: 100
+    imu_mag_data_rate: 10
+    imu_pressure_data_rate: 10
 
-    # GNSS
-    publish_gnss1: true
-    publish_gnss2: true
+    # GNSS 1
+    gnss1_llh_position_data_rate: 4
+    gnss1_velocity_data_rate: 4
+    gnss1_odometry_earth_data_rate: 4
+    gnss1_time_data_rate: 1
+    mip_gnss1_fix_info_data_rate: 1
+    mip_gnss1_sbas_info_data_rate: 1
+    mip_gnss1_rf_error_detection_data_rate: 1
 
-    # Filtered output
-    publish_filter: true
-    filter_odometry_earth_data_rate: 10
-    filter_odometry_map_data_rate: 10
+    # GNSS 2
+    gnss2_llh_position_data_rate: 4
+    gnss2_velocity_data_rate: 4
+    gnss2_odometry_earth_data_rate: 4
+    gnss2_time_data_rate: 1
+    mip_gnss2_fix_info_data_rate: 1
+    mip_gnss2_sbas_info_data_rate: 1
+    mip_gnss2_rf_error_detection_data_rate: 1
+
+    # EKF filter output
+    filter_odometry_earth_data_rate: 25
+    filter_odometry_map_data_rate: 25
+    filter_imu_data_rate: 100
+    filter_llh_position_data_rate: 10
+    filter_velocity_data_rate: 10
+    filter_human_readable_status_data_rate: 1
+    filter_dual_antenna_heading_data_rate: 4
+
+    # Diagnostics / status
+    mip_filter_status_data_rate: 1
+    mip_filter_gnss_position_aiding_status_data_rate: 1
+    mip_filter_gnss_dual_antenna_status_data_rate: 1
+    mip_filter_aiding_measurement_summary_data_rate: 1
+    mip_filter_multi_antenna_offset_correction_data_rate: 1
+    mip_sensor_overrange_status_data_rate: 1
+    mip_sensor_temperature_statistics_data_rate: 1
+    mip_system_built_in_test_data_rate: 1
+    mip_system_time_sync_status_data_rate: 1
+
+    # GNSS aiding
+    filter_enable_gnss_heading_aiding: true
+    filter_enable_gnss_pos_vel_aiding: true
+    filter_auto_init: true
+    filter_auto_heading_alignment_selector: 0
+
+    # RTK dongle
+    rtk_dongle_enable: false
+
+    # SBAS
+    sbas_enable: true
+    sbas_apply_integrity: false

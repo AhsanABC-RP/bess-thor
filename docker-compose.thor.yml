@@ -636,17 +636,38 @@ services:
         source /ros2_ws/install/setup.bash
         TIMESTAMP=$(date +%Y%m%d_%H%M%S)_$$
         exec ros2 bag record \
-          --output /recordings/capture_${TIMESTAMP} \
+          --output /recordings/soak_${TIMESTAMP} \
+          --storage mcap \
           --qos-profile-overrides-path /rosbag_qos.yaml \
           --max-cache-size 500000000 \
           /ouster/points \
           /ouster/imu \
+          /ouster/metadata \
+          /ouster/nearir_image \
+          /ouster/reflec_image \
+          /ouster/signal_image \
+          /ouster/range_image \
           /thermal/camera1/image_raw \
+          /thermal/camera1/camera_info \
           /thermal/camera2/image_raw \
+          /thermal/camera2/camera_info \
           /thermal/camera3/image_raw \
+          /thermal/camera3/camera_info \
           /thermal/camera4/image_raw \
+          /thermal/camera4/camera_info \
           /lucid1/camera_driver/image_raw \
+          /lucid1/camera_driver/camera_info \
+          /lucid2/camera_driver/image_raw \
+          /lucid2/camera_driver/camera_info \
+          /blackfly/camera1/blackfly_camera/image_raw \
+          /blackfly/camera1/blackfly_camera/camera_info \
+          /blackfly/camera1/blackfly_camera/meta \
+          /blackfly/camera2/blackfly_camera/image_raw \
+          /blackfly/camera2/blackfly_camera/camera_info \
+          /blackfly/camera2/blackfly_camera/meta \
           /imu/data \
+          /ekf/odometry_earth \
+          /mip/gnss_corrections/rtk_corrections_status \
           /tf \
           /tf_static
     profiles:
