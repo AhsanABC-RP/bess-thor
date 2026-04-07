@@ -344,6 +344,7 @@ services:
     container_name: blackfly1
     volumes:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/blackfly_s_thor.yaml:/config/blackfly_s_thor.yaml:ro
     command:
       - bash
       - -c
@@ -358,7 +359,8 @@ services:
             -r __node:=blackfly_camera -r __ns:=/blackfly/camera1 \
             -p serial_number:="'25073269'" \
             -p frame_id:=blackfly1_optical_frame \
-            -p parameter_file:=/ros2_ws/install/spinnaker_camera_driver/share/spinnaker_camera_driver/config/blackfly_s.yaml \
+            -p parameter_file:=/config/blackfly_s_thor.yaml \
+            -p pixel_format:=BayerRG8 \
             -p frame_rate:=5.0 \
             -p frame_rate_enable:=true \
             -p frame_rate_auto:=Off \
@@ -368,7 +370,16 @@ services:
             -p buffer_queue_size:=10 \
             -p trigger_mode:=Off \
             -p adjust_timestamp:=true \
-            -p pixel_format:=Mono16 || true
+            -p compute_brightness:=true \
+            -p chunk_mode_active:=true \
+            -p chunk_selector_frame_id:=FrameID \
+            -p chunk_enable_frame_id:=true \
+            -p chunk_selector_exposure_time:=ExposureTime \
+            -p chunk_enable_exposure_time:=true \
+            -p chunk_selector_gain:=Gain \
+            -p chunk_enable_gain:=true \
+            -p chunk_selector_timestamp:=Timestamp \
+            -p chunk_enable_timestamp:=true || true
           echo "[blackfly1] Exited, restarting in 10s..."
           sleep 10
         done
@@ -388,6 +399,7 @@ services:
     container_name: blackfly2
     volumes:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/blackfly_s_thor.yaml:/config/blackfly_s_thor.yaml:ro
     command:
       - bash
       - -c
@@ -402,7 +414,8 @@ services:
             -r __node:=blackfly_camera -r __ns:=/blackfly/camera2 \
             -p serial_number:="'25073270'" \
             -p frame_id:=blackfly2_optical_frame \
-            -p parameter_file:=/ros2_ws/install/spinnaker_camera_driver/share/spinnaker_camera_driver/config/blackfly_s.yaml \
+            -p parameter_file:=/config/blackfly_s_thor.yaml \
+            -p pixel_format:=BayerRG8 \
             -p frame_rate:=5.0 \
             -p frame_rate_enable:=true \
             -p frame_rate_auto:=Off \
@@ -412,7 +425,16 @@ services:
             -p buffer_queue_size:=10 \
             -p trigger_mode:=Off \
             -p adjust_timestamp:=true \
-            -p pixel_format:=Mono16 || true
+            -p compute_brightness:=true \
+            -p chunk_mode_active:=true \
+            -p chunk_selector_frame_id:=FrameID \
+            -p chunk_enable_frame_id:=true \
+            -p chunk_selector_exposure_time:=ExposureTime \
+            -p chunk_enable_exposure_time:=true \
+            -p chunk_selector_gain:=Gain \
+            -p chunk_enable_gain:=true \
+            -p chunk_selector_timestamp:=Timestamp \
+            -p chunk_enable_timestamp:=true || true
           echo "[blackfly2] Exited, restarting in 10s..."
           sleep 10
         done

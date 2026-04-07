@@ -1,0 +1,79 @@
+#
+# Blackfly S config for Thor — BayerRG8, 5fps, long auto exposure
+#
+parameters:
+  - name: pixel_format
+    type: enum
+    node: ImageFormatControl/PixelFormat
+  - name: binning_x
+    type: int
+    node: ImageFormatControl/BinningHorizontal
+  - name: binning_y
+    type: int
+    node: ImageFormatControl/BinningVertical
+  - name: image_width
+    type: int
+    node: ImageFormatControl/Width
+  - name: image_height
+    type: int
+    node: ImageFormatControl/Height
+  - name: gain_auto
+    type: enum
+    node: AnalogControl/GainAuto
+  - name: gain
+    type: float
+    node: AnalogControl/Gain
+  - name: device_link_throughput_limit
+    type: int
+    node: DeviceControl/DeviceLinkThroughputLimit
+  - name: gev_scps_packet_size
+    type: int
+    node: TransportLayerControl/GigEVision/GevSCPSPacketSize
+  - name: exposure_auto
+    type: enum
+    node: AcquisitionControl/ExposureAuto
+  - name: exposure_time
+    type: float
+    node: AcquisitionControl/ExposureTime
+  - name: frame_rate_enable
+    type: bool
+    node: AcquisitionControl/AcquisitionFrameRateEnable
+  - name: frame_rate
+    type: float
+    node: AcquisitionControl/AcquisitionFrameRate
+  - name: frame_rate_auto
+    type: enum
+    node: AcquisitionControl/AcquisitionFrameRateAuto
+  - name: trigger_mode
+    type: enum
+    node: AcquisitionControl/TriggerMode
+  - name: chunk_mode_active
+    type: bool
+    node: ChunkDataControl/ChunkModeActive
+  - name: chunk_selector_frame_id
+    type: enum
+    node: ChunkDataControl/ChunkSelector
+  - name: chunk_enable_frame_id
+    type: bool
+    node: ChunkDataControl/ChunkEnable
+  - name: chunk_selector_exposure_time
+    type: enum
+    node: ChunkDataControl/ChunkSelector
+  - name: chunk_enable_exposure_time
+    type: bool
+    node: ChunkDataControl/ChunkEnable
+  - name: chunk_selector_gain
+    type: enum
+    node: ChunkDataControl/ChunkSelector
+  - name: chunk_enable_gain
+    type: bool
+    node: ChunkDataControl/ChunkEnable
+  - name: chunk_selector_timestamp
+    type: enum
+    node: ChunkDataControl/ChunkSelector
+  - name: chunk_enable_timestamp
+    type: bool
+    node: ChunkDataControl/ChunkEnable
+  - name: stream_buffer_handling_mode
+    type: enum
+    node: BufferHandlingControl/StreamBufferHandlingMode
