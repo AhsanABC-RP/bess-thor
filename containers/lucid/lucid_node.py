@@ -130,6 +130,7 @@ class LucidCameraNode(Node):
             # Use the first (and only) device we opened
             self.device = devices[0]
             nodemap = self.device.nodemap
+            self.nodemap = nodemap
             model = nodemap['DeviceModelName'].value
             serial = nodemap['DeviceSerialNumber'].value
             dev_ip = nodemap['GevCurrentIPAddress'].value
@@ -204,6 +205,28 @@ class LucidCameraNode(Node):
             except Exception:
                 pass
 
+            # Enable PTP clock sync (IEEE 1588) — Thor mgbe0_0 is grandmaster.
+            # Per Lucid KB "PTP with LUCID cameras", set PtpEnable=True and
+            # PtpSlaveOnly=True so the camera never tries to become master and
+            # always follows our ptp4l-mgbe0 instance. PtpDataSetLatch then
+            # snapshots the internal PTP state for reading via PtpStatus.
+            try:
+                nodemap['PtpEnable'].value = True
+                self.get_logger().info("PtpEnable=True")
+                try:
+                    nodemap['PtpSlaveOnly'].value = True
+                    self.get_logger().info("PtpSlaveOnly=True")
+                except Exception as e:
+                    self.get_logger().warning(f"PtpSlaveOnly unavailable: {e}")
+                try:
+                    nodemap['PtpDataSetLatch'].execute()
+                    status = nodemap['PtpStatus'].value
+                    self.get_logger().info(f"PtpStatus={status}")
+                except Exception as e:
+                    self.get_logger().warning(f"PtpStatus read failed: {e}")
+            except Exception as e:
+                self.get_logger().warning(f"Could not enable PTP: {e}")
+
             # Get image dimensions
             self.width = nodemap['Width'].value
             self.height = nodemap['Height'].value
@@ -244,7 +267,13 @@ class LucidCameraNode(Node):
                 now = time.time()
                 if now - self.last_log_time >= 5.0:
                     fps = self.frame_count / (now - self.last_log_time)
-                    self.get_logger().info(f"Publishing at {fps:.1f} Hz")
+                    ptp_status = "?"
+                    try:
+                        self.nodemap['PtpDataSetLatch'].execute()
+                        ptp_status = self.nodemap['PtpStatus'].value
+                    except Exception as e:
+                        ptp_status = f"latch_err:{e}"
+                    self.get_logger().info(f"Publishing at {fps:.1f} Hz PtpStatus={ptp_status}")
                     self.frame_count = 0
                     self.last_log_time = now
 

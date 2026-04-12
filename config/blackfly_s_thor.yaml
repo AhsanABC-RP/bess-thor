@@ -29,6 +29,9 @@ parameters:
   - name: gev_scps_packet_size
     type: int
     node: TransportLayerControl/GigEVision/GevSCPSPacketSize
+  - name: gev_scpd
+    type: int
+    node: TransportLayerControl/GigEVision/GevSCPD
   - name: exposure_auto
     type: enum
     node: AcquisitionControl/ExposureAuto
@@ -77,3 +80,19 @@ parameters:
   - name: stream_buffer_handling_mode
     type: enum
     node: BufferHandlingControl/StreamBufferHandlingMode
+  # GevIEEE1588 must be written to the camera's GenICam tree to actually
+  # enable PTP on the device. The driver's use_ieee_1588 parameter only
+  # toggles its internal offset-reporting logic — it does NOT write this
+  # feature. Both are required: gev_ieee_1588 (yaml-mapped) flips the
+  # camera into PTP mode, use_ieee_1588 (driver param) makes the driver
+  # read GevIEEE1588Status and adjust timestamps.
+  - name: gev_ieee_1588
+    type: bool
+    node: TransportLayerControl/GigEVision/GevIEEE1588
+  # gev_ieee_1588_mode=SlaveOnly prevents the camera from running BMCA and
+  # occasionally re-electing itself as master, which on Thor caused the
+  # PtpStatus to flap MAS↔SLV every ~10s. SlaveOnly forces the camera to
+  # always follow whichever grandmaster it sees (ptp4l-mgbe0 on Thor).
+  - name: gev_ieee_1588_mode
+    type: enum
+    node: TransportLayerControl/GigEVision/GevIEEE1588Mode

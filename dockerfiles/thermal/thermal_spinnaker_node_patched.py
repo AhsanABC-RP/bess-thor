@@ -328,6 +328,31 @@ class ThermalSpinnakerNode(Node):
         except PySpin.SpinnakerException as e:
             self.get_logger().warn(f'Could not set IRFormat: {e}')
 
+        # Enable GevIEEE1588 (PTP clock sync) — host is grandmaster on mgbe0_0 PHC1.
+        # When enabled, the camera's stream-channel timestamp is disciplined to
+        # the PTP grandmaster so image acquisition times align with /ouster/points
+        # and all other PTP-synced sensors to sub-microsecond precision.
+        # Applies to A6701 + A70 + Blackfly alike (all GigE Vision 2.0).
+        try:
+            ptp_en = PySpin.CBooleanPtr(nodemap.GetNode('GevIEEE1588'))
+            if ptp_en.IsValid() and PySpin.IsWritable(ptp_en):
+                ptp_en.SetValue(True)
+                self.get_logger().info('Enabled GevIEEE1588 (PTP clock sync)')
+            else:
+                self.get_logger().warn('GevIEEE1588 node not writable — PTP unavailable on this camera')
+        except PySpin.SpinnakerException as e:
+            self.get_logger().warn(f'Could not enable GevIEEE1588: {e}')
+
+        # Log initial PTP status (will be "Initializing" at this point; check later)
+        try:
+            ptp_stat = PySpin.CEnumerationPtr(nodemap.GetNode('GevIEEE1588Status'))
+            if ptp_stat.IsValid() and PySpin.IsReadable(ptp_stat):
+                self.get_logger().info(
+                    f'GevIEEE1588Status={ptp_stat.GetCurrentEntry().GetSymbolic()}'
+                )
+        except PySpin.SpinnakerException:
+            pass
+
         # Confirm
         try:
             pf = PySpin.CEnumerationPtr(nodemap.GetNode('PixelFormat'))

@@ -64,7 +64,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /ouster/points >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "os_driver"]
     profiles:
       - lidar
       - sensors
@@ -95,7 +95,7 @@ services:
         exec ros2 launch /ros2_ws/launch_imu.py port:=/dev/ttyACM0 aux_port:=/dev/ttyACM1
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /imu/data >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "microstrain_ine"]
     profiles:
       - imu
       - sensors
@@ -133,7 +133,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera1/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "python3"]
     profiles:
       - thermal
       - sensors
@@ -167,7 +167,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera2/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "python3"]
     profiles:
       - thermal
       - sensors
@@ -205,7 +205,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera3/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "python3"]
     profiles:
       - thermal
       - sensors
@@ -240,7 +240,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo --once /thermal/camera4/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "python3"]
     profiles:
       - thermal
       - sensors
@@ -279,7 +279,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /lucid1/camera_driver/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "python3"]
     profiles:
       - lucid
       - rgb
@@ -316,7 +316,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /lucid2/camera_driver/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "python3"]
     profiles:
       - lucid
       - rgb
@@ -326,13 +326,14 @@ services:
 
   compress-lucid2:
     <<: *common
-    image: localhost/bess-lucid:jazzy
+    image: localhost/bess-gpu-compress:jazzy
     container_name: compress-lucid2
     volumes:
-      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./containers/cameras/gpu_compress_cuda.py:/ros2_ws/gpu_compress_cuda.py:ro
+      - ./containers/cameras/nvjpeg_encoder.py:/ros2_ws/nvjpeg_encoder.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/lucid2/camera_driver/image_raw -p output_topic:=/lucid2/camera_driver/image_raw/compressed"]
+    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/lucid2/camera_driver/image_raw -p output_topic:=/lucid2/camera_driver/image_raw/compressed"]
     profiles: [lucid, rgb, sensors, dev, full]
 
   # ===========================================================================
@@ -366,10 +367,13 @@ services:
             -p frame_rate_auto:=Off \
             -p exposure_auto:=Continuous \
             -p gain_auto:=Continuous \
+            -p device_link_throughput_limit:=125000000 \
             -p gev_scps_packet_size:=1400 \
             -p buffer_queue_size:=10 \
             -p trigger_mode:=Off \
-            -p adjust_timestamp:=true \
+            -p use_ieee_1588:=true \
+            -p max_ieee_1588_offset:=0.001 \
+            -p adjust_timestamp:=false \
             -p compute_brightness:=true \
             -p chunk_mode_active:=true \
             -p chunk_selector_frame_id:=FrameID \
@@ -379,13 +383,15 @@ services:
             -p chunk_selector_gain:=Gain \
             -p chunk_enable_gain:=true \
             -p chunk_selector_timestamp:=Timestamp \
-            -p chunk_enable_timestamp:=true || true
-          echo "[blackfly1] Exited, restarting in 10s..."
-          sleep 10
+            -p chunk_enable_timestamp:=true \
+            -p gev_ieee_1588:=true \
+            -p gev_ieee_1588_mode:=SlaveOnly || true
+          echo "[blackfly1] Exited, waiting 30s for GigE heartbeat to clear..."
+          sleep 30
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && timeout 10 ros2 topic echo --once /blackfly/camera1/blackfly_camera/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "camera_driver_n"]
     profiles:
       - blackfly
       - rgb
@@ -424,7 +430,9 @@ services:
             -p gev_scps_packet_size:=1400 \
             -p buffer_queue_size:=10 \
             -p trigger_mode:=Off \
-            -p adjust_timestamp:=true \
+            -p use_ieee_1588:=true \
+            -p max_ieee_1588_offset:=0.001 \
+            -p adjust_timestamp:=false \
             -p compute_brightness:=true \
             -p chunk_mode_active:=true \
             -p chunk_selector_frame_id:=FrameID \
@@ -434,13 +442,15 @@ services:
             -p chunk_selector_gain:=Gain \
             -p chunk_enable_gain:=true \
             -p chunk_selector_timestamp:=Timestamp \
-            -p chunk_enable_timestamp:=true || true
+            -p chunk_enable_timestamp:=true \
+            -p gev_ieee_1588:=true \
+            -p gev_ieee_1588_mode:=SlaveOnly || true
           echo "[blackfly2] Exited, restarting in 10s..."
           sleep 10
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && timeout 10 ros2 topic echo --once /blackfly/camera2/blackfly_camera/image_raw >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "camera_driver_n"]
     profiles:
       - blackfly
       - rgb
@@ -505,39 +515,42 @@ services:
 
   compress-lucid1:
     <<: *common
-    image: localhost/bess-lucid:jazzy
+    image: localhost/bess-gpu-compress:jazzy
     container_name: compress-lucid1
     volumes:
-      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./containers/cameras/gpu_compress_cuda.py:/ros2_ws/gpu_compress_cuda.py:ro
+      - ./containers/cameras/nvjpeg_encoder.py:/ros2_ws/nvjpeg_encoder.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/lucid1/camera_driver/image_raw -p output_topic:=/lucid1/camera_driver/image_raw/compressed"]
+    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/lucid1/camera_driver/image_raw -p output_topic:=/lucid1/camera_driver/image_raw/compressed"]
     profiles: [lucid, rgb, sensors, dev, full]
 
   compress-blackfly1:
     <<: *common
-    image: localhost/bess-thermal:jazzy
+    image: localhost/bess-gpu-compress:jazzy
     container_name: compress-blackfly1
     environment:
       <<: *common-env
     volumes:
-      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./containers/cameras/gpu_compress_cuda.py:/ros2_ws/gpu_compress_cuda.py:ro
+      - ./containers/cameras/nvjpeg_encoder.py:/ros2_ws/nvjpeg_encoder.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera1/blackfly_camera/image_raw -p output_topic:=/blackfly/camera1/image_raw/compressed"]
+    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/blackfly/camera1/blackfly_camera/image_raw -p output_topic:=/blackfly/camera1/blackfly_camera/image_raw/compressed"]
     profiles: [blackfly, rgb, sensors, dev, full]
 
   compress-blackfly2:
     <<: *common
-    image: localhost/bess-thermal:jazzy
+    image: localhost/bess-gpu-compress:jazzy
     container_name: compress-blackfly2
     environment:
       <<: *common-env
     volumes:
-      - ./containers/cameras/gpu_compress.py:/ros2_ws/gpu_compress.py:ro
+      - ./containers/cameras/gpu_compress_cuda.py:/ros2_ws/gpu_compress_cuda.py:ro
+      - ./containers/cameras/nvjpeg_encoder.py:/ros2_ws/nvjpeg_encoder.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/gpu_compress.py --ros-args -p input_topic:=/blackfly/camera2/blackfly_camera/image_raw -p output_topic:=/blackfly/camera2/image_raw/compressed"]
+    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/blackfly/camera2/blackfly_camera/image_raw -p output_topic:=/blackfly/camera2/blackfly_camera/image_raw/compressed"]
     profiles: [blackfly, rgb, sensors, dev, full]
 
   # ===========================================================================
@@ -582,7 +595,7 @@ services:
                export CYCLONEDDS_URI=file:///config/cyclonedds.xml &&
                ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765 address:=0.0.0.0 tls:=false"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8765"]
+      test: ["CMD", "pgrep", "-x", "foxglove_bridge"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -614,9 +627,12 @@ services:
     command: >
       bash -c "source /opt/ros/humble/setup.bash &&
                ros2 run glim_ros glim_rosnode --ros-args -p config_path:=/config"
+    # DEPRECATED on Thor: GLIM output is too sparse on the Ouster OS1-128
+    # stream compared to DLIO / FAST-LIO2. Kept as a reference profile so
+    # bags can still be reprocessed against it, but not started as part of
+    # the default `slam` / `full` stacks.
     profiles:
-      - slam
-      - full
+      - glim-deprecated
     restart: unless-stopped
 
   kiss-icp:
@@ -660,20 +676,63 @@ services:
         source /ros2_ws/install/setup.bash
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
-        echo "[dlio] Starting DLIO with Ouster OS1-128 + Ouster IMU..."
-        # Override default configs with Thor-specific settings
+        echo "[dlio] Starting DLIO with Ouster OS1-128 + GQ7 IMU..."
         cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/dlio.yaml
         cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/params.yaml
         ros2 launch direct_lidar_inertial_odometry dlio.launch.py \
           pointcloud_topic:=/ouster/points \
-          imu_topic:=/ouster/imu \
-          rviz:=false
+          imu_topic:=/imu/data \
+          rviz:=false &
+        LAUNCH_PID=$$!
+        sleep 20
+        while kill -0 $$LAUNCH_PID 2>/dev/null; do
+          if ! pgrep -x dlio_odom_node >/dev/null; then
+            echo "[dlio] dlio_odom_node died - terminating launch for restart"
+            kill -TERM $$LAUNCH_PID 2>/dev/null || true
+            sleep 2
+            kill -KILL $$LAUNCH_PID 2>/dev/null || true
+            exit 1
+          fi
+          sleep 3
+        done
+        wait $$LAUNCH_PID
+        exit $$?
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && timeout 5 ros2 topic echo --once /dlio/odom_node/odom >/dev/null 2>&1"]
+      # Check odom_node (not map_node) — odom_node is the process that dies
+      # on time-sync faults and heap corruption; map_node stays alive longer
+      # and hides the failure from the healthcheck, leaving the container
+      # "healthy" with SLAM actually dead.
+      test: ["CMD", "pgrep", "-x", "dlio_odom_node"]
     profiles:
       - slam
       - dlio
+      - full
+
+  # ===========================================================================
+  # FAST-LIO2 — Tightly-coupled LiDAR-inertial odometry (ROS 2 Jazzy)
+  # Ouster OS1-128 + MicroStrain GQ7. Runs alongside DLIO as second LIO stack.
+  # GLIM deprecated (too sparse) — FAST-LIO2 + DLIO are the primary LIOs.
+  # ===========================================================================
+  fast-lio:
+    <<: *common
+    image: localhost/bess-fast-lio:jazzy
+    container_name: fast-lio
+    mem_limit: 16g
+    memswap_limit: 16g
+    volumes:
+      - ./containers/fast-lio/fast_lio_single.yaml:/ros2_ws/config/fast_lio_single.yaml:ro
+      - ./containers/fast-lio/launch_fast_lio_single.py:/ros2_ws/launch_fast_lio_single.py:ro
+      - ./containers/fast-lio/imu_guard.py:/ros2_ws/imu_guard.py:ro
+      - ./containers/fast-lio/scancontext_node.py:/ros2_ws/scancontext_node.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - /home/thor/recordings:/data:rw
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "pgrep", "-x", "fastlio_mapping"]
+    profiles:
+      - slam
+      - fast-lio
       - full
 
   # ===========================================================================
@@ -683,8 +742,9 @@ services:
     <<: *common
     image: localhost/bess-ouster:jazzy
     container_name: recorder
+    user: "1000:1000"
     volumes:
-      - /home/thor/recordings:/recordings:rw
+      - /home/thor/bess/data/cache:/recordings:rw
       - /home/thor/rosbag_qos.yaml:/rosbag_qos.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
@@ -695,16 +755,24 @@ services:
       - |
         source /opt/ros/jazzy/setup.bash
         source /ros2_ws/install/setup.bash
-        TIMESTAMP=$(date +%Y%m%d_%H%M%S)_$$
+        TIMESTAMP=$$(date +%Y%m%d_%H%M%S)_$$$$
         exec ros2 bag record \
-          --output /recordings/soak_${TIMESTAMP} \
+          --output /recordings/soak_$${TIMESTAMP} \
           --storage mcap \
           --qos-profile-overrides-path /rosbag_qos.yaml \
           --max-cache-size 500000000 \
           --max-bag-size 50000000000 \
           /ouster/points \
+          /ouster/points2 \
           /ouster/imu \
           /ouster/metadata \
+          /ouster/nearir_image \
+          /ouster/range_image \
+          /ouster/range_image2 \
+          /ouster/reflec_image \
+          /ouster/reflec_image2 \
+          /ouster/signal_image \
+          /ouster/signal_image2 \
           /thermal/camera1/image_raw/compressed \
           /thermal/camera1/camera_info \
           /thermal/camera2/image_raw/compressed \
@@ -727,7 +795,12 @@ services:
           /blackfly/camera2/blackfly_camera/image_raw/compressed \
           /blackfly/camera2/blackfly_camera/camera_info \
           /blackfly/camera2/blackfly_camera/meta \
+          /blackfly/camera1/blackfly_camera/image_masked/compressed \
+          /blackfly/camera2/blackfly_camera/image_masked/compressed \
+          /lucid1/camera_driver/image_masked/compressed \
+          /lucid2/camera_driver/image_masked/compressed \
           /imu/data \
+          /imu/data_guarded \
           /imu/mag \
           /imu/pressure \
           /ekf/odometry_earth \
@@ -749,18 +822,32 @@ services:
           /mip/ekf/gnss_position_aiding_status \
           /mip/ekf/gnss_dual_antenna_status \
           /mip/ekf/aiding_measurement_summary \
+          /mip/ekf/multi_antenna_offset_correction \
           /mip/gnss_1/fix_info \
+          /mip/gnss_1/sbas_info \
+          /mip/gnss_1/rf_error_detection \
           /mip/gnss_2/fix_info \
+          /mip/gnss_2/sbas_info \
+          /mip/gnss_2/rf_error_detection \
+          /mip/gnss_corrections/rtk_corrections_status \
           /mip/sensor/overrange_status \
           /mip/sensor/temperature_statistics \
           /mip/system/built_in_test \
           /mip/system/time_sync_status \
+          /environment/temperature \
+          /environment/humidity \
+          /nmea \
+          /rtcm \
           /dlio/odom_node/odom \
           /dlio/odom_node/pose \
           /dlio/odom_node/path \
           /dlio/odom_node/pointcloud/deskewed \
           /dlio/odom_node/pointcloud/keyframe \
           /dlio/odom_node/keyframes \
+          /slam/odometry \
+          /slam/path \
+          /slam/cloud_registered \
+          /slam/cloud_registered_body \
           /tf \
           /tf_static \
           /rutx/gps/fix \
@@ -778,6 +865,81 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # PII MASKING (YOLOv8n GPU face/plate masking, RGB cameras)
+  # Subscribes to raw RGB topics, publishes *_masked compressed topics that
+  # downstream (SegFormer, extraction, recorder) consume.
+  # ===========================================================================
+  pii-mask:
+    <<: *common
+    image: localhost/bess-pii-mask:jazzy
+    container_name: pii-mask
+    environment:
+      <<: *common-env
+      YOLO_CONFIG_DIR: /tmp/Ultralytics
+    volumes:
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./containers/pii-mask/pii_mask_node.py:/ros2_ws/pii_mask_node.py:ro
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "pgrep", "-f", "pii_mask_node"]
+    profiles:
+      - pii
+      - inference
+      - full
+
+  # ===========================================================================
+  # SEGFORMER SEMANTIC SEGMENTATION (Cityscapes 19-class, GPU FP16)
+  # Subscribes to PII-masked compressed topics, publishes class label maps
+  # and colored overlays. ~800 MiB VRAM, shares GPU 0 with pii-mask.
+  # ===========================================================================
+  segformer:
+    <<: *common
+    image: localhost/bess-segformer:jazzy
+    container_name: segformer
+    volumes:
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./containers/segformer/segformer_node.py:/ros2_ws/segformer_node.py:ro
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "pgrep", "-f", "segformer_node"]
+    depends_on:
+      - pii-mask
+    profiles:
+      - segformer
+      - inference
+      - full
+
+  # ===========================================================================
+  # EXTRACTION PIPELINE
+  # Consumes SLAM odometry, GNSS, PII-masked RGB, thermal, LiDAR panoramas,
+  # SLAM per-scan clouds. Produces session directory with RGB JPEGs, thermal
+  # NPY, LiDAR images, per-scan LAS, trajectory NPZ, UPRN frame visibility JSON.
+  # CPU-only — no GPU needed.
+  # ===========================================================================
+  extraction:
+    <<: *common
+    image: localhost/bess-extraction:jazzy
+    container_name: extraction
+    environment:
+      <<: *common-env
+      EXTRACTION_DIR: /data/extraction
+      SPATIAL_DB: /data/spatial/bess_uprn.db
+      CALIB_DIR: /config/cameras/calibration
+    volumes:
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./config/extraction/cameras.yaml:/config/cameras.yaml:ro
+      - ./config/cameras/calibration:/config/cameras/calibration:ro
+      - /mnt/bess-usb/extraction:/data/extraction:rw
+      - /mnt/bess-usb/spatial:/data/spatial:ro
+      - ./containers/extraction/bess-extraction.py:/ros2_ws/bess-extraction.py:ro
+    profiles:
+      - extraction
+      - full
+
+  # ===========================================================================
   # RUTX50 5G / GPS TELEMETRY
   # Polls Teltonika RUTX50 API for mobile signal + GNSS position
   # ===========================================================================
@@ -789,7 +951,7 @@ services:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /rutx/mobile/rsrp >/dev/null 2>&1"]
+      test: ["CMD", "pgrep", "-x", "python3"]
     profiles:
       - telemetry
       - sensors
