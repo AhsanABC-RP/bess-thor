@@ -1,0 +1,7 @@
+/dlio_odom_node:
+  ros__parameters:
+    qos_overrides:
+      pointcloud:
+        subscription:
+          reliability: best_effort
+          depth: 5

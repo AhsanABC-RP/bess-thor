@@ -11,7 +11,7 @@
     frames/imu: imu_link
 
     map/waitUntilMove: false
-    map/dense/filtered: false
+    map/dense/filtered: true         # voxel-filter dense map — prevents unbounded RAM growth
     map/sparse/leafSize: 0.25
 
     odom/gravity: 9.80665
@@ -29,9 +29,9 @@
     odom/keyframe/threshD: 1.0
     odom/keyframe/threshR: 45.0
 
-    odom/submap/keyframe/knn: 10
-    odom/submap/keyframe/kcv: 10
-    odom/submap/keyframe/kcc: 10
+    odom/submap/keyframe/knn: 5      # was 10 — halves submap working set
+    odom/submap/keyframe/kcv: 5
+    odom/submap/keyframe/kcc: 5
     odom/gicp/minNumPoints: 64
     odom/gicp/kCorrespondences: 16
     odom/gicp/maxCorrespondenceDistance: 0.5

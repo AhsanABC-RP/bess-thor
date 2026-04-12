@@ -57,7 +57,7 @@ services:
         source /ros2_ws/install/setup.bash
         while true; do
           echo "[ouster] Starting driver..."
-          timeout 300 ros2 launch ouster_ros driver.launch.py \
+          ros2 launch ouster_ros driver.launch.py \
             params_file:=/params.yaml viz:=false || true
           echo "[ouster] Driver exited, restarting in 10s..."
           sleep 10
@@ -270,7 +270,7 @@ services:
             -p camera_ip:=169.254.20.23 \
             -p camera_name:=lucid1 \
             -p frame_id:=lucid1_optical_frame \
-            -p fps:=5.0 \
+            -p fps:=3.0 \
             -p binning:=4 \
             -p exposure_us:=-1.0 \
             -p gain_db:=-1.0 || true
@@ -307,7 +307,7 @@ services:
             -p camera_ip:=169.254.20.14 \
             -p camera_name:=lucid2 \
             -p frame_id:=lucid2_optical_frame \
-            -p fps:=5.0 \
+            -p fps:=3.0 \
             -p binning:=4 \
             -p exposure_us:=-1.0 \
             -p gain_db:=-1.0 || true
@@ -644,6 +644,9 @@ services:
     <<: *common
     image: localhost/bess-dlio:jazzy
     container_name: dlio
+    mem_limit: 16g
+    memswap_limit: 16g
+    oom_kill_disable: false
     volumes:
       - ./config/dlio/dlio_thor.yaml:/ros2_ws/dlio_thor.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
@@ -658,6 +661,9 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         echo "[dlio] Starting DLIO with Ouster OS1-128 + Ouster IMU..."
+        # Override default configs with Thor-specific settings
+        cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/dlio.yaml
+        cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/params.yaml
         ros2 launch direct_lidar_inertial_odometry dlio.launch.py \
           pointcloud_topic:=/ouster/points \
           imu_topic:=/ouster/imu \
@@ -756,10 +762,38 @@ services:
           /dlio/odom_node/pointcloud/keyframe \
           /dlio/odom_node/keyframes \
           /tf \
-          /tf_static
+          /tf_static \
+          /rutx/gps/fix \
+          /rutx/mobile/rsrp \
+          /rutx/mobile/rsrq \
+          /rutx/mobile/sinr \
+          /rutx/mobile/rssi \
+          /rutx/mobile/band \
+          /rutx/mobile/conntype \
+          /rutx/mobile/cellid \
+          /rutx/mobile/operator \
+          /diagnostics
     profiles:
       - record
     restart: "no"
+
+  # ===========================================================================
+  # RUTX50 5G / GPS TELEMETRY
+  # Polls Teltonika RUTX50 API for mobile signal + GNSS position
+  # ===========================================================================
+  rutx:
+    <<: *common
+    image: localhost/bess-rutx:jazzy
+    container_name: rutx
+    volumes:
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "bash", "-c", "source /opt/ros/jazzy/setup.bash && timeout 5 ros2 topic echo --once /rutx/mobile/rsrp >/dev/null 2>&1"]
+    profiles:
+      - telemetry
+      - sensors
+      - full
 
 # ===========================================================================
 # VOLUMES

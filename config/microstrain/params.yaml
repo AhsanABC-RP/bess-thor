@@ -60,6 +60,14 @@ microstrain_imu:
     # RTK dongle
     rtk_dongle_enable: false
 
+    # NTRIP RTK corrections
+    ntrip_interface_enable: true
+    ntrip_interface_hostname: "uk.nrtk.eu"
+    ntrip_interface_port: 7801
+    ntrip_interface_mountpoint: "MSM_i-MAX"
+    ntrip_interface_username: "XRI003"
+    ntrip_interface_password: "23705"
+
     # SBAS
     sbas_enable: true
     sbas_apply_integrity: false

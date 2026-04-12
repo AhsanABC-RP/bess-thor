@@ -62,11 +62,13 @@ class GpuCompressNode(Node):
             # Convert ROS Image to numpy array
             if msg.encoding in ['bayer_rggb8', 'bayer_gbrg8', 'bayer_grbg8', 'bayer_bggr8']:
                 # Debayer first - map ROS encoding to OpenCV conversion
+                # ROS and OpenCV use OPPOSITE Bayer naming conventions
+                # ROS bayer_rggb8 = pixel(0,0) is R → OpenCV COLOR_BAYER_BG2BGR
                 bayer_map = {
-                    'bayer_rggb8': cv2.COLOR_BAYER_RG2BGR,
-                    'bayer_gbrg8': cv2.COLOR_BAYER_GB2BGR,
-                    'bayer_grbg8': cv2.COLOR_BAYER_GR2BGR,
-                    'bayer_bggr8': cv2.COLOR_BAYER_BG2BGR,
+                    'bayer_rggb8': cv2.COLOR_BAYER_BG2BGR,
+                    'bayer_gbrg8': cv2.COLOR_BAYER_GR2BGR,
+                    'bayer_grbg8': cv2.COLOR_BAYER_GB2BGR,
+                    'bayer_bggr8': cv2.COLOR_BAYER_RG2BGR,
                 }
                 img = np.frombuffer(msg.data, dtype=np.uint8).reshape(
                     msg.height, msg.width)

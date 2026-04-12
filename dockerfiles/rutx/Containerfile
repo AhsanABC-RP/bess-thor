@@ -1,0 +1,17 @@
+# BESS RUTX50 Telemetry Node
+# Polls Teltonika RUTX50 API for 5G signal and GPS, publishes ROS2 topics.
+# Build: docker build -t localhost/bess-rutx:jazzy -f Containerfile .
+
+FROM localhost/bess-base:jazzy
+
+RUN apt-get update && apt-get install -y \
+    python3-requests \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY rutx_telemetry_node.py /ros2_ws/rutx_telemetry_node.py
+RUN chmod +x /ros2_ws/rutx_telemetry_node.py
+
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV ROS_DOMAIN_ID=0
+
+CMD ["bash","-c","source /opt/ros/jazzy/setup.bash && python3 /ros2_ws/rutx_telemetry_node.py"]
