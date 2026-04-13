@@ -14,7 +14,7 @@ Hardware:
 
 Architecture:
   /imu/data -> [IMU Guard] -> /imu/data_guarded -> [FAST-LIO2]
-  /ouster/points -----------------------------------------> [FAST-LIO2] -> /slam/odometry
+  /ouster/points -----------------------------------------> [FAST-LIO2] -> /fast_lio/odometry
 """
 
 import os
@@ -106,6 +106,48 @@ def generate_launch_description():
             ]
         ),
 
+        # ----------------------------------------------------------------------
+        # Cross-SLAM TF unification — DO NOT REMOVE
+        # ----------------------------------------------------------------------
+        # FAST-LIO2, DLIO, and GLIM each publish to disjoint TF roots
+        # (camera_init / dlio_odom / glim_map). Without these statics, Foxglove
+        # cannot transform GLIM or DLIO map points into the `map` display frame,
+        # and they render as "no points" even though the topics carry data.
+        # Identity is fine — the SLAMs disagree on global pose by definition,
+        # so the displayed offset BETWEEN the maps is the comparison signal.
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='tf_map_to_glim_map',
+            arguments=['0', '0', '0', '0', '0', '0', 'map', 'glim_map']
+        ),
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='tf_map_to_dlio_odom',
+            arguments=['0', '0', '0', '0', '0', '0', 'map', 'dlio_odom']
+        ),
+
+        # ----------------------------------------------------------------------
+        # Camera optical-frame statics — single broadcaster
+        # ----------------------------------------------------------------------
+        # Each camera driver stamps its images with `<cam>_optical_frame`. None
+        # of those frames are children of base_link, so Foxglove can't transform
+        # camera images into the SLAM map and the 3D panel logs "no transform
+        # from <cam>_optical_frame to map" for every cam.
+        #
+        # 8 separate `static_transform_publisher` processes (one per cam) tipped
+        # the CycloneDDS per-host participant pool over its limit and killed
+        # fastlio_mapping with "Failed to find a free participant index for
+        # domain 0". camera_tf_broadcaster.py latches all 8 statics from a
+        # single rclpy participant. Identity placeholders for now; replace with
+        # Phase 5B calibrated extrinsics when available.
+        ExecuteProcess(
+            cmd=['python3', '/ros2_ws/camera_tf_broadcaster.py'],
+            name='camera_tf_broadcaster',
+            output='screen',
+        ),
+
         # ========================================
         # IMU Guard Node
         # ========================================
@@ -136,11 +178,13 @@ def generate_launch_description():
                 # directly to create subscribers, so input remappings are a
                 # no-op and must live in the yaml.
 
-                # Output topics — remap into the /slam/* namespace
-                ('/cloud_registered', '/slam/cloud_registered'),
-                ('/cloud_registered_body', '/slam/cloud_registered_body'),
-                ('/Odometry', '/slam/odometry'),
-                ('/path', '/slam/path'),
+                # Output topics — remap into the /fast_lio/* namespace so
+                # they don't collide with /dlio/* or /glim/* when multiple
+                # SLAM backends run in parallel.
+                ('/cloud_registered', '/fast_lio/cloud_registered'),
+                ('/cloud_registered_body', '/fast_lio/cloud_registered_body'),
+                ('/Odometry', '/fast_lio/odometry'),
+                ('/path', '/fast_lio/path'),
             ]
         ),
 
@@ -162,11 +206,27 @@ def generate_launch_description():
         # Scan Context Loop Closure Node (optional)
         # ========================================
         # Provides place recognition for loop closure
-        # Input: /slam/cloud_registered, /slam/odometry
-        # Output: /slam/loop_closure, /slam/keyframes
+        # Input: /fast_lio/cloud_registered, /fast_lio/odometry
+        # Output: /fast_lio/loop_closure, /fast_lio/keyframes
         ExecuteProcess(
             cmd=['python3', '/ros2_ws/scancontext_node.py'],
             name='scancontext_loop_closure',
+            output='screen',
+        ),
+
+        # ----------------------------------------------------------------------
+        # camera_init -> body TF re-broadcaster @ 50 Hz (stamp = now())
+        # ----------------------------------------------------------------------
+        # FAST-LIO2 natively publishes camera_init -> body with stamp =
+        # lidar_end_time of the scan it just processed, which ends up ~500-700 ms
+        # behind wall-clock once you add scan duration + iEKF compute. Sensor
+        # messages are stamped at host wall-clock, so Foxglove's `map -> os_lidar`
+        # lookup at message-time hits ExtrapolationException and refuses to
+        # render Ouster points under `map`. Re-stamping the pose at now() closes
+        # that gap; see tf_republisher.py for the full reasoning.
+        ExecuteProcess(
+            cmd=['python3', '/ros2_ws/tf_republisher.py'],
+            name='fast_lio_tf_republisher',
             output='screen',
         ),
     ])

@@ -1,0 +1,27 @@
+# SLAM2REF — Align SLAM output to reference map
+# 6-DoF pose accuracy up to 3cm against OS MasterMap / reference clouds
+# Usage: podman run --rm -v /var/mnt/nvme2/slam-output:/data bess-slam2ref:humble ...
+#
+# Build: podman build -t localhost/bess-slam2ref:humble -f Containerfile.slam2ref .
+
+FROM docker.io/ros:humble-ros-base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libeigen3-dev libpcl-dev libgflags-dev libgoogle-glog-dev \
+    cmake build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+
+# SLAM2REF is ROS-independent C++
+WORKDIR /workspace
+RUN git clone --depth 1 https://github.com/MigVega/SLAM2REF.git
+
+WORKDIR /workspace/SLAM2REF
+RUN mkdir -p build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) || echo "Build may need patches for system deps"
+
+COPY entrypoint-postprocess.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]

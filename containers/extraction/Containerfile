@@ -1,0 +1,36 @@
+# BESS Real-Time Extraction Pipeline Container
+# Consumes SLAM odometry, GNSS, PII-masked camera topics, thermal, LiDAR panos,
+# and SLAM per-scan clouds. Produces a session directory with RGB JPEGs,
+# thermal NPY, LiDAR images, per-scan LAS, trajectory NPZ, and UPRN frame
+# visibility JSON.
+#
+# Base: bess-cameras:jazzy (Ubuntu 22.04 + ROS Humble + cv_bridge). No CUDA
+# required — extraction is pure data handling.
+#
+# Build:
+#   docker build -t localhost/bess-extraction:jazzy \
+#     -f containers/extraction/Containerfile containers/extraction
+
+FROM localhost/bess-cameras:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir \
+    pyproj \
+    'laspy[lazrs]' \
+    pyyaml
+
+COPY bess-extraction.py /ros2_ws/bess-extraction.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /ros2_ws/bess-extraction.py
+
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python3", "/ros2_ws/bess-extraction.py"]

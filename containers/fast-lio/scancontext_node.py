@@ -6,12 +6,12 @@ Provides place recognition and loop closure detection using Scan Context
 descriptors. Works alongside FAST-LIO2 to improve long-term mapping accuracy.
 
 Subscribes:
-    /slam/cloud_registered (sensor_msgs/PointCloud2)
-    /slam/odometry (nav_msgs/Odometry)
+    /fast_lio/cloud_registered (sensor_msgs/PointCloud2)
+    /fast_lio/odometry (nav_msgs/Odometry)
 
 Publishes:
-    /slam/loop_closure (geometry_msgs/PoseWithCovarianceStamped)
-    /slam/keyframes (visualization_msgs/MarkerArray)
+    /fast_lio/loop_closure (geometry_msgs/PoseWithCovarianceStamped)
+    /fast_lio/keyframes (visualization_msgs/MarkerArray)
 """
 
 import numpy as np
@@ -133,22 +133,20 @@ class ScanContextNode(Node):
             depth=1
         )
 
-        # Subscribers
         self.cloud_sub = self.create_subscription(
-            PointCloud2, '/slam/cloud_registered',
+            PointCloud2, '/fast_lio/cloud_registered',
             self.cloud_callback, sensor_qos
         )
         self.odom_sub = self.create_subscription(
-            Odometry, '/slam/odometry',
+            Odometry, '/fast_lio/odometry',
             self.odom_callback, sensor_qos
         )
 
-        # Publishers
         self.loop_pub = self.create_publisher(
-            PoseWithCovarianceStamped, '/slam/loop_closure', 10
+            PoseWithCovarianceStamped, '/fast_lio/loop_closure', 10
         )
         self.marker_pub = self.create_publisher(
-            MarkerArray, '/slam/keyframes', 10
+            MarkerArray, '/fast_lio/keyframes', 10
         )
 
         # Processing timer (10Hz)

@@ -20,6 +20,18 @@ ouster/os_driver:
     # Setting this to 0.0 disables the -37s subtraction and aligns Ouster
     # stamps with wall clock / other PTP sensors.
     ptp_utc_tai_offset: 0.0
+    # organized: false drops no-return beams at the driver (17% of cloud on
+    # OS1-128). Keeping them as NaN bloats every downstream topic and forces
+    # each SLAM stack to re-filter per scan. All consumers here (FAST-LIO2,
+    # DLIO, slam_map_accumulator, Foxglove) handle unorganized clouds, so
+    # filtering at the source is strictly better.
+    organized: false
+    # Force single-return profile. OS1-128 firmware defaults to a dual-return
+    # profile and the Ouster ROS 2 driver creates a parallel set of `*2` topics
+    # (/ouster/points2, range_image2, reflec_image2, signal_image2) for the
+    # second return — they spam the topic list and we never use them. Forcing
+    # the single-return profile drops the *2 publishers entirely.
+    udp_profile_lidar: "RNG19_RFL8_SIG16_NIR16"
     udp_profile_imu: "ACCEL32_GYRO32_NMEA"
     imu_packets_per_frame: 8
     gyro_fsr: "EXTENDED"

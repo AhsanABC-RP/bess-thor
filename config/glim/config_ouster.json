@@ -1,0 +1,56 @@
+{
+  "//": "BESS GLIM Ouster LiDAR Sensor Configuration",
+  "//": "Ouster OS1-128, Serial: 122451001119, Mode: 2048x10",
+
+  "sensor": {
+    "type": "ouster",
+    "model": "OS1-128",
+
+    "//": "=== LiDAR Parameters ===",
+    "num_rings": 128,
+    "points_per_ring": 2048,
+    "scan_rate": 10.0,
+    "max_range": 100.0,
+    "min_range": 1.0,
+
+    "//": "=== Timing ===",
+    "//": "PTP 1588 synchronized, TAI offset -37s",
+    "use_ptp_time": true,
+    "tai_offset_seconds": -37,
+
+    "//": "=== Point Format ===",
+    "//": "Ouster native format with ring, time, intensity",
+    "point_format": "ouster_native",
+    "has_ring": true,
+    "has_time": true,
+    "has_intensity": true,
+    "has_ambient": true,
+
+    "//": "=== Frame Configuration ===",
+    "sensor_frame": "os_sensor",
+    "lidar_frame": "os_lidar",
+    "imu_frame": "os_imu",
+
+    "//": "=== Extrinsics: Sensor to Body ===",
+    "//": "TODO: Update with calibrated values from Phase 5B",
+    "extrinsic_translation": [0.0, 0.0, 0.20],
+    "extrinsic_rotation": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+  },
+
+  "imu": {
+    "type": "microstrain_gq7",
+    "topic": "/imu/data_guarded",
+    "rate": 500.0,
+
+    "//": "=== GQ7 Noise Parameters ===",
+    "//": "From MicroStrain GQ7 datasheet",
+    "acc_noise_density": 0.00025,
+    "gyr_noise_density": 0.000017,
+    "acc_random_walk": 0.00003,
+    "gyr_random_walk": 0.000002,
+
+    "//": "=== Extrinsics: IMU to LiDAR (180° yaw — Ouster cable exits backward from GQ7 X-axis) ===",
+    "extrinsic_translation": [0.0, 0.0, 0.20],
+    "extrinsic_rotation": [-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0]
+  }
+}

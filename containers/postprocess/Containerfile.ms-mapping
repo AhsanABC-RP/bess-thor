@@ -1,0 +1,38 @@
+# MS-Mapping — Multi-session map merging
+# Merges repeated survey routes into globally consistent map
+# Usage: podman run --rm -v /var/mnt/nvme2/slam-output:/data bess-ms-mapping:humble ...
+#
+# Build: podman build -t localhost/bess-ms-mapping:humble -f Containerfile.ms-mapping .
+
+FROM docker.io/ros:humble-ros-base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libeigen3-dev libpcl-dev libgflags-dev libgoogle-glog-dev \
+    libboost-all-dev libtbb-dev \
+    cmake build-essential git python3-colcon-common-extensions \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build GTSAM from source (not packaged for Ubuntu 22.04)
+RUN git clone --depth 1 -b 4.2 https://github.com/borglab/gtsam.git /tmp/gtsam && \
+    cd /tmp/gtsam && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+        -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
+        -DGTSAM_BUILD_TESTS=OFF \
+        -DGTSAM_BUILD_UNSTABLE=OFF \
+        -DGTSAM_USE_SYSTEM_EIGEN=ON && \
+    make -j$(nproc) && make install && ldconfig && \
+    rm -rf /tmp/gtsam
+
+WORKDIR /workspace/src
+RUN git clone --depth 1 https://github.com/JokerJohn/MS-Mapping.git
+
+WORKDIR /workspace
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release" || \
+    echo "Build may need patches for ROS2 Humble compatibility"
+
+COPY entrypoint-postprocess.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]

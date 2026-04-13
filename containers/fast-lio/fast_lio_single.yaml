@@ -8,9 +8,19 @@
   ros__parameters:
     feature_extract_enable: false
     point_filter_num: 1
-    max_iteration: 3
-    filter_size_surf: 0.5
-    filter_size_map: 0.5
+    # Bumped 3 -> 4 to give the iEKF an extra refinement step. With OS1-128
+    # at 131k pts/scan and the heavier (smaller) surf filter below, 3 iters
+    # was leaving residual pose error scan-to-scan that showed as ghosted
+    # walls in the accumulated map.
+    max_iteration: 4
+    # Was 0.5 on both — copied straight from upstream ouster64.yaml which
+    # was tuned for a Velodyne HDL-64 (~85k pts/scan, vertical FoV 26.9°).
+    # OS1-128 is ~131k pts/scan with 45° vertical, so we can voxelize finer
+    # without blowing up the kdtree. Going to 0.2 surf / 0.15 map matches
+    # DLIO's 0.10 preprocess voxel and gives crisp building edges instead
+    # of the 50cm "blur ball" the previous config produced.
+    filter_size_surf: 0.2
+    filter_size_map: 0.15
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
     map_file_path: "/tmp/fast_lio.pcd"
@@ -38,13 +48,29 @@
       b_gyr_cov: 0.0001
       fov_degree: 360.0
       det_range: 150.0
-      extrinsic_est_en: true
-      # Ouster internal IMU sits inside the sensor body — translation is
-      # ~0 for OS1. extrinsic_est_en=true lets FAST-LIO refine online.
-      extrinsic_T: [0.0, 0.0, 0.0]
-      extrinsic_R: [1.0, 0.0, 0.0,
-                    0.0, 1.0, 0.0,
-                    0.0, 0.0, 1.0]
+      # extrinsic_est_en was true — let FAST-LIO refine lidar<->imu online.
+      # That makes sense when you don't trust the static calibration, but
+      # we have it from the Ouster sensor metadata (read off /tf_static
+      # below). Estimating 6 DOF of extrinsic on top of pose, with only
+      # 4 iEKF iterations, was walking the estimate scan-to-scan and
+      # showing as ghosted double-walls. Lock it to the metadata values.
+      extrinsic_est_en: false
+      # Ouster OS1 publishes os_sensor->os_lidar with a 180° Z rotation
+      # (q = 0,0,1,0) — the lidar coordinate frame is intentionally yawed
+      # 180° vs the sensor body. The internal BMI085 IMU on /ouster/imu is
+      # in os_sensor orientation (identity), so IMU and LIDAR differ by
+      # exactly Rz(180°). The previous identity extrinsic flipped IMU X/Y
+      # signs into the lidar prediction every iEKF step — that's THE
+      # ghost source on a tightly-coupled iEKF (DLIO is GICP-heavy and
+      # masks it; FAST-LIO2 is IMU-heavy and cannot).
+      #
+      # Translation: lidar origin in os_sensor = (0, 0, 0.0382),
+      #              imu  origin in os_sensor = (-0.0024, -0.0097, 0.0075).
+      #              Lidar in IMU coords = (0.0024, 0.0097, 0.0307).
+      extrinsic_T: [0.0024, 0.0097, 0.0307]
+      extrinsic_R: [-1.0,  0.0, 0.0,
+                     0.0, -1.0, 0.0,
+                     0.0,  0.0, 1.0]
 
     publish:
       path_en: true

@@ -1,0 +1,27 @@
+# ERASOR2 — Dynamic object removal from SLAM point clouds
+# Removes cars, pedestrians, etc. from survey maps
+# Usage: podman run --rm -v /var/mnt/nvme2/slam-output:/data bess-erasor2:humble ...
+#
+# Build: podman build -t localhost/bess-erasor2:humble -f Containerfile.erasor2 .
+
+FROM docker.io/ros:humble-ros-base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libeigen3-dev libpcl-dev libgoogle-glog-dev libgflags-dev \
+    cmake build-essential git python3-colcon-common-extensions \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/src
+RUN git clone --depth 1 https://github.com/url-kaist/ERASOR2.git || \
+    git clone --depth 1 https://github.com/LimHyungTae/ERASOR.git
+
+WORKDIR /workspace
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
+    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release" || \
+    echo "Build may need manual fixes for ROS2 compatibility"
+
+COPY entrypoint-postprocess.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]

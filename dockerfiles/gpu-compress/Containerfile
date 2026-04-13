@@ -1,0 +1,33 @@
+# BESS GPU JPEG Compressor - NVIDIA nvJPEG via ctypes
+# HARD-FAILS at runtime if libnvjpeg unavailable, no silent CPU fallback.
+#
+# Build:
+#   docker build -t localhost/bess-gpu-compress:jazzy \
+#     -f dockerfiles/gpu-compress/Containerfile dockerfiles/gpu-compress
+#
+# Base: localhost/bess-cameras:jazzy already ships CUDA 12.4 with
+# /usr/local/cuda/lib64/libnvjpeg.so.12 and ROS 2 Humble + cv_bridge.
+
+FROM localhost/bess-cameras:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install CycloneDDS RMW so this image matches the rest of the stack.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+# Probe libnvjpeg at build time — fail the layer if it can't load.
+RUN python3 -c "import ctypes; \
+    lib = ctypes.CDLL('/usr/local/cuda/lib64/libnvjpeg.so.12'); \
+    print('libnvjpeg OK:', lib)"
+
+COPY nvjpeg_encoder.py /ros2_ws/nvjpeg_encoder.py
+COPY gpu_compress_cuda.py /ros2_ws/gpu_compress_cuda.py
+RUN chmod +x /ros2_ws/gpu_compress_cuda.py
+
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+
+CMD ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py"]

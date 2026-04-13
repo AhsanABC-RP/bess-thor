@@ -1,0 +1,24 @@
+# BESS CalibRefine Container (GPU)
+# Targetless camera-LiDAR calibration refinement
+FROM docker.io/nvidia/cuda:12.2.2-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PyTorch (large download, increase timeout)
+RUN pip3 install --no-cache-dir --timeout 300 --retries 5 \
+    torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+RUN pip3 install --no-cache-dir \
+    numpy matplotlib opencv-python-headless \
+    open3d scipy pillow tqdm
+
+COPY calibrefine /opt/calibrefine
+WORKDIR /opt/calibrefine
+
+# PointNet2 is included as source (no build needed)
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

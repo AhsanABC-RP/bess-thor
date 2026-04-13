@@ -1,0 +1,45 @@
+# BESS PII Masking Container
+# Real-time face/license plate detection and masking using YOLOv8 on GPU
+
+[Unit]
+Description=BESS PII Masking (YOLOv8 GPU)
+After=bess-cameras.service
+Wants=bess-cameras.service
+
+[Container]
+ContainerName=bess-pii-mask
+Image=localhost/bess-pii-mask:humble
+Pull=never
+Pod=bess-sensors.pod
+
+# Environment
+Environment=ROS_DOMAIN_ID=0
+Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+Environment=NVIDIA_VISIBLE_DEVICES=all
+Environment=NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Mount configuration
+Volume=/opt/bess/config:/ros2_ws/config:ro,z
+
+# GPU access
+AddDevice=nvidia.com/gpu=all
+
+# Network
+Network=host
+
+# Security for GPU
+SecurityLabelDisable=true
+
+# Health check
+HealthCmd=python3 -c "import torch; assert torch.cuda.is_available()"
+HealthInterval=60s
+HealthTimeout=30s
+HealthRetries=3
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

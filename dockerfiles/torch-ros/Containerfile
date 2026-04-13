@@ -1,0 +1,50 @@
+# BESS Torch+ROS Base for Thor
+# Combines NGC PyTorch 25.08 (Ubuntu 24.04 / Python 3.12 / torch 2.8 / CUDA 13.0
+# with sm_110 kernels for Thor) with ROS 2 Jazzy. Used as the base for
+# PII-mask and SegFormer inference containers.
+#
+# Build:
+#   docker build -t localhost/bess-torch-ros:jazzy \
+#     -f dockerfiles/torch-ros/Containerfile dockerfiles/torch-ros
+
+FROM nvcr.io/nvidia/pytorch:25.08-py3
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ROS 2 Jazzy on Ubuntu 24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gnupg2 lsb-release locales software-properties-common \
+    && locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8 \
+    && add-apt-repository universe -y \
+    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+       -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu noble main" \
+       > /etc/apt/sources.list.d/ros2.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       ros-jazzy-ros-base \
+       ros-jazzy-cv-bridge \
+       ros-jazzy-image-transport \
+       ros-jazzy-sensor-msgs-py \
+       ros-jazzy-rmw-cyclonedds-cpp \
+       python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Torch's libtorch_cuda.so links HPCX libucc.so.1, which in turn links
+# HPCX libucs.so.0. cv-bridge pulls libopencv-dev which drags Ubuntu's
+# libucs into /usr/lib/aarch64-linux-gnu. The Ubuntu libucs is ABI-
+# incompatible with HPCX libucc (missing `ucs_config_doc_nop`). At build
+# time we put HPCX first in ld.so.cache by renaming the conf file. At
+# runtime the NVIDIA Container Toolkit regenerates ld.so.cache after
+# mounting host libs, so we ALSO prepend HPCX paths to LD_LIBRARY_PATH,
+# which the dynamic linker honors ahead of ld.so.cache.
+RUN mv /etc/ld.so.conf.d/hpcx.conf /etc/ld.so.conf.d/000_hpcx.conf \
+    && ldconfig
+
+ENV LD_LIBRARY_PATH=/opt/hpcx/ucx/lib:/opt/hpcx/ucc/lib:${LD_LIBRARY_PATH}
+
+# Build-time sanity check: torch imports cleanly (CUDA runtime requires GPU
+# passthrough so we only check it at container start, not here)
+RUN python3 -c "import torch; print('torch', torch.__version__)"
+
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp

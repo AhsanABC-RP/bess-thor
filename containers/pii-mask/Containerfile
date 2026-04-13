@@ -1,0 +1,32 @@
+# BESS PII Masking Container — YOLOv8 GPU face/plate masking on Thor
+# Uses bess-torch-ros:jazzy base (NGC PyTorch 25.08 + ROS 2 Jazzy) so torch
+# sees Thor's sm_110 kernels. Base supplies torch/torchvision/cuda already.
+#
+# Build:
+#   docker build -t localhost/bess-pii-mask:jazzy \
+#     -f containers/pii-mask/Containerfile containers/pii-mask
+
+FROM localhost/bess-torch-ros:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ultralytics + opencv-headless. Pillow is already in the NGC image.
+# numpy must stay at 1.x for cv_bridge compat (compiled against numpy 1).
+RUN pip3 install --no-cache-dir --break-system-packages \
+    ultralytics \
+    opencv-python-headless \
+    'numpy<2'
+
+RUN mkdir -p /ros2_ws/models /ros2_ws/src
+
+# Pre-cache YOLOv8n weights in the image
+RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+
+COPY pii_mask_node.py /ros2_ws/pii_mask_node.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /ros2_ws/pii_mask_node.py
+
+WORKDIR /ros2_ws
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python3", "/ros2_ws/pii_mask_node.py"]

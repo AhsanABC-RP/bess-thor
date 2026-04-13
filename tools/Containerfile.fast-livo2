@@ -1,0 +1,27 @@
+# BESS FAST-LIVO2 Container (ROS2 Humble)
+# LiDAR-Inertial-Visual Odometry
+FROM docker.io/ros:humble
+
+# Force IPv4 for apt (IPv6 unreliable on some networks)
+RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
+
+# Split apt install into retries (unreliable network)
+RUN for i in 1 2 3; do \
+    apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip cmake git \
+        ros-humble-cv-bridge \
+        ros-humble-image-transport \
+        ros-humble-pcl-ros \
+        ros-humble-tf2-ros \
+        ros-humble-tf2-eigen \
+        libeigen3-dev libpcl-dev libopencv-dev \
+    && break || echo "apt attempt $i failed, retrying..." && sleep 30; \
+    done && rm -rf /var/lib/apt/lists/*
+
+COPY FAST-LIVO2_ROS2 /ros2_ws/src/fast_livo2
+
+WORKDIR /ros2_ws
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build --symlink-install 2>&1 || echo 'Build needs manual review'"
+
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash 2>/dev/null; exec \"$@\"", "--"]
+CMD ["bash"]

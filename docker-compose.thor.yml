@@ -700,35 +700,77 @@ services:
       - dev
       - full
 
+  # Plain-ws Foxglove bridge for the **desktop app** over Tailscale/LAN.
+  # Tailscale already encrypts link traffic, so the TLS layer on port 8765 is
+  # pure CPU overhead for big point clouds. This second bridge on 8766 is
+  # ws://, not wss://, and is the fast path for native desktop Foxglove.
+  # Browsers on app.foxglove.dev still need the TLS bridge on 8765.
+  foxglove-local:
+    <<: *common
+    image: localhost/bess-foxglove:jazzy
+    container_name: foxglove-local
+    volumes:
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+    environment:
+      <<: *common-env
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
+        exec ros2 launch foxglove_bridge foxglove_bridge_launch.xml \
+          port:=8766 address:=0.0.0.0 tls:=false \
+          send_buffer_limit:=100000000 \
+          max_qos_depth:=1
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "foxglove_bridge"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - viz
+      - dev
+      - full
+
   # ===========================================================================
   # SLAM (from original compose - kept for reference)
   # ===========================================================================
   glim:
-    image: glim-ros2:humble
+    image: glim-ros2:humble-cyclone
     container_name: glim
     network_mode: host
     ipc: host
     environment:
       ROS_DOMAIN_ID: "0"
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
-      CYCLONEDDS_URI: file:///config/cyclonedds.xml
+      CYCLONEDDS_URI: file:///dds/cyclonedds.xml
       CUDA_VISIBLE_DEVICES: ""
       NVIDIA_VISIBLE_DEVICES: ""
       GLIM_DATA_PATH: /usr/local/share/glim
     volumes:
       - ./config/glim:/config:ro
       - ./maps:/maps:rw
-      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
-      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: >
-      bash -c "source /opt/ros/humble/setup.bash &&
-               ros2 run glim_ros glim_rosnode --ros-args -p config_path:=/config"
-    # DEPRECATED on Thor: GLIM output is too sparse on the Ouster OS1-128
-    # stream compared to DLIO / FAST-LIO2. Kept as a reference profile so
-    # bags can still be reprocessed against it, but not started as part of
-    # the default `slam` / `full` stacks.
+      - ./config/cyclonedds.xml:/dds/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/dds/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        source /opt/ros/humble/setup.bash
+        # The Ouster BMI085 (os_imu) is co-located with the lidar head, so the
+        # base_link extrinsic is identity. GLIM's built-in rviz viewer needs
+        # os_imu → glim_base_link in the TF tree before it will render — add
+        # it as a sidecar static broadcaster. glim_base_link only gets one
+        # parent (os_imu) to avoid a TF double-parent conflict.
+        ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 os_imu glim_base_link &
+        exec ros2 run glim_ros glim_rosnode --ros-args -p config_path:=/config
     profiles:
       - glim-deprecated
+      - slam
+      - full
     restart: unless-stopped
 
   kiss-icp:
@@ -780,6 +822,14 @@ services:
         # This mirrors the fix applied to fast-lio for the same divergence class.
         cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/dlio.yaml
         cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/params.yaml
+        # Patch the upstream launch file to remap dlio_map_node's /map topic
+        # into the /dlio namespace so it doesn't pollute the global topic list
+        # alongside FAST-LIO2 (/fast_lio/map_voxel) and GLIM (/glim_ros/map).
+        DLIO_LAUNCH=/ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/launch/dlio.launch.py
+        if ! grep -q "dlio/map" "$$DLIO_LAUNCH"; then
+          sed -i "/'keyframes', 'dlio\/odom_node\/pointcloud\/keyframe'/a\\            ('map', 'dlio/map')," "$$DLIO_LAUNCH"
+          echo "[dlio] patched dlio.launch.py: /map -> /dlio/map"
+        fi
         ros2 launch direct_lidar_inertial_odometry dlio.launch.py \
           pointcloud_topic:=/ouster/points \
           imu_topic:=/ouster/imu \
@@ -826,6 +876,8 @@ services:
       - ./containers/fast-lio/launch_fast_lio_single.py:/ros2_ws/launch_fast_lio_single.py:ro
       - ./containers/fast-lio/imu_guard.py:/ros2_ws/imu_guard.py:ro
       - ./containers/fast-lio/scancontext_node.py:/ros2_ws/scancontext_node.py:ro
+      - ./containers/fast-lio/camera_tf_broadcaster.py:/ros2_ws/camera_tf_broadcaster.py:ro
+      - ./containers/fast-lio/tf_republisher.py:/ros2_ws/tf_republisher.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - /home/thor/recordings:/data:rw
     healthcheck:
@@ -838,9 +890,9 @@ services:
 
   # ===========================================================================
   # SLAM MAP ACCUMULATOR — bounded unified world map for Foxglove
-  # Subscribes to /slam/cloud_registered (FAST-LIO2 per-scan in camera_init
-  # frame), voxel-hashes into a bounded grid, republishes /slam/map_voxel on
-  # a 2s timer with TRANSIENT_LOCAL durability so late subscribers latch on.
+  # Subscribes to /fast_lio/cloud_registered (FAST-LIO2 per-scan in camera_init
+  # frame), voxel-hashes into a bounded grid, republishes /fast_lio/map_voxel
+  # on a 2s timer with TRANSIENT_LOCAL durability so late subscribers latch on.
   # This replaces FAST-LIO2's native publish.map_en, which accumulates
   # unbounded and produces 100+ MB messages that choke CycloneDDS fragment
   # reassembly (killing delivery of every other SLAM topic).
@@ -859,11 +911,11 @@ services:
         source /opt/ros/jazzy/setup.bash
         exec python3 /ros2_ws/slam_map_accumulator.py \
           --ros-args \
-          -p input_topic:=/slam/cloud_registered \
-          -p output_topic:=/slam/map_voxel \
+          -p input_topic:=/fast_lio/cloud_registered \
+          -p output_topic:=/fast_lio/map_voxel \
           -p frame_id:=camera_init \
-          -p voxel_size:=0.25 \
-          -p max_voxels:=2000000 \
+          -p voxel_size:=0.12 \
+          -p max_voxels:=4000000 \
           -p publish_period_sec:=2.0
     healthcheck:
       <<: *healthcheck-ros2
@@ -989,10 +1041,11 @@ services:
           /dlio/odom_node/pointcloud/deskewed \
           /dlio/odom_node/pointcloud/keyframe \
           /dlio/odom_node/keyframes \
-          /slam/odometry \
-          /slam/path \
-          /slam/cloud_registered \
-          /slam/cloud_registered_body \
+          /fast_lio/odometry \
+          /fast_lio/path \
+          /fast_lio/cloud_registered \
+          /fast_lio/cloud_registered_body \
+          /fast_lio/map_voxel \
           /tf \
           /tf_static \
           /rutx/gps/fix \

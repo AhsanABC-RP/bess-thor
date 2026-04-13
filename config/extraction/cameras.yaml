@@ -1,0 +1,21 @@
+# BESS Thor Sensor Topic Mapping
+# Maps asset name to ROS2 topic. Structure matches the grey/white extraction
+# pipeline so bess-extraction.py runs unmodified.
+
+# RGB (compressed, PII-masked) — all four Thor RGB cameras
+blackfly1_rgb: /blackfly/camera1/blackfly_camera/image_masked/compressed
+blackfly2_rgb: /blackfly/camera2/blackfly_camera/image_masked/compressed
+lucid1_rgb:    /lucid1/camera_driver/image_masked/compressed
+lucid2_rgb:    /lucid2/camera_driver/image_masked/compressed
+
+# Thermal (raw Mono16 for radiometric processing) — 4 cameras on Thor
+thermal1_raw: /thermal/camera1/image_raw
+thermal2_raw: /thermal/camera2/image_raw
+thermal3_raw: /thermal/camera3/image_raw
+thermal4_raw: /thermal/camera4/image_raw
+
+# LiDAR panoramas (raw Image)
+lidar_range:  /ouster/range_image
+lidar_reflec: /ouster/reflec_image
+lidar_nearir: /ouster/nearir_image
+lidar_signal: /ouster/signal_image

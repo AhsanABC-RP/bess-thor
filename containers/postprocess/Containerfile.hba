@@ -1,0 +1,26 @@
+# HBA — Hierarchical Bundle Adjustment for SLAM pose refinement
+# Centimeter-level accuracy from GLIM output
+# Usage: podman run --rm -v /var/mnt/nvme2/slam-output:/data bess-hba:humble ...
+#
+# Build: podman build -t localhost/bess-hba:humble -f Containerfile.hba .
+
+FROM docker.io/ros:humble-ros-base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libeigen3-dev libpcl-dev libceres-dev libgflags-dev libgoogle-glog-dev \
+    cmake build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+RUN git clone --depth 1 https://github.com/hku-mars/HBA.git
+
+WORKDIR /workspace/HBA
+RUN mkdir -p build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) || echo "Build may need patches for system deps"
+
+COPY entrypoint-postprocess.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]

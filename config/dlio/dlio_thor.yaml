@@ -10,10 +10,17 @@
     # for comparison; Foxglove should point at base_link (owned by FAST-LIO2
     # via the camera_init -> body -> base_link static chain) for the primary
     # view, and at dlio_base_link for DLIO's alternative path.
+    # All DLIO frames namespaced with `dlio_` to avoid TF2 multi-parent conflicts.
+    # DLIO publishes `frames/baselink -> frames/lidar` and `frames/baselink -> frames/imu`,
+    # so if these point at `os_lidar` / `imu_link` the Ouster driver and FAST-LIO2
+    # static publishers fight DLIO for ownership of those frames and Foxglove
+    # rejects the whole tree (TF2 forbids multi-parent). dlio_lidar/dlio_imu are
+    # private to DLIO; they coincide with os_lidar/imu_link via map -> dlio_odom
+    # static identity in launch_fast_lio_single.py.
     frames/odom: dlio_odom
     frames/baselink: dlio_base_link
-    frames/lidar: os_lidar
-    frames/imu: imu_link
+    frames/lidar: dlio_lidar
+    frames/imu: dlio_imu
 
     map/waitUntilMove: false
     map/dense/filtered: true         # voxel-filter dense map — prevents unbounded RAM growth
@@ -29,7 +36,12 @@
     odom/imu/bufferSize: 5000
 
     odom/preprocessing/cropBoxFilter/size: 1.0
-    odom/preprocessing/voxelFilter/res: 0.25
+    # 0.25 was DLIO default — gave a "dot matrix" look in Foxglove because
+    # /dlio/odom_node/pointcloud/deskewed is published AFTER this filter, so
+    # one point per 25cm cube. Dropped to 0.10 → ~6x denser (200k → 30k stays
+    # at ~190k), modest extra GICP CPU. Lower further only if scenes are
+    # sparse and CPU has headroom.
+    odom/preprocessing/voxelFilter/res: 0.10
 
     odom/keyframe/threshD: 1.0
     odom/keyframe/threshR: 45.0

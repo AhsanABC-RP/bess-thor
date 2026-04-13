@@ -1,0 +1,23 @@
+# BESS Unified ML Client
+# ROS2 node connecting to Triton Inference Server via gRPC.
+# Subscribes to camera + thermal topics, publishes inference results.
+# Replaces: bess-pii-mask, bess-segformer, bess-thermal-analysis
+
+FROM localhost/bess-base:humble
+
+# Install Triton gRPC client + vision_msgs + cv_bridge
+RUN pip3 install --no-cache-dir tritonclient[grpc] "numpy<2" opencv-python-headless && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        ros-humble-vision-msgs \
+        ros-humble-cv-bridge \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy node
+COPY ml_client_node.py /ros2_ws/ml_client_node.py
+
+# Entrypoint
+COPY entrypoint.sh /ros2_ws/entrypoint.sh
+RUN chmod +x /ros2_ws/entrypoint.sh
+
+ENTRYPOINT ["/ros2_ws/entrypoint.sh"]
+CMD ["python3", "/ros2_ws/ml_client_node.py"]

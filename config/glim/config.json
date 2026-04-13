@@ -1,0 +1,19 @@
+{
+  /*** Global Configuration ***
+  // Root dispatcher for GLIM. The Thor `glim` container runs CPU-only
+  // (CUDA_VISIBLE_DEVICES="" + cpu-only image with no libodometry_estimation_gpu.so),
+  // so this points at the CPU variants. config_*_cpu.json were copied from
+  // /opt/ros/humble/share/glim/config/ inside the glim-ros2:humble-cyclone image.
+  */
+  "global": {
+    "config_path": "",
+    "config_ros": "config_ros.json",
+    "config_logging": "config_logging.json",
+    "config_viewer": "config_viewer.json",
+    "config_sensors": "config_sensors.json",
+    "config_preprocess": "config_preprocess.json",
+    "config_odometry": "config_odometry_cpu.json",
+    "config_sub_mapping": "config_sub_mapping_cpu.json",
+    "config_global_mapping": "config_global_mapping_cpu.json"
+  }
+}

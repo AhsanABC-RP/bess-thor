@@ -1,0 +1,25 @@
+# BESS Thermal Pavement Analysis Container
+# EfficientNet-B0 backbone for thermal anomaly classification
+# GPU 0, ~100 MiB VRAM FP16
+#
+# Build: podman build -t localhost/bess-thermal-analysis:humble .
+
+FROM localhost/bess-base:humble
+
+RUN pip3 install --no-cache-dir \
+    torch torchvision --index-url https://download.pytorch.org/whl/cu124
+RUN pip3 install --no-cache-dir \
+    timm \
+    opencv-python-headless \
+    'numpy<2'
+
+# Pre-download EfficientNet-B0 backbone
+RUN python3 -c "import timm; timm.create_model('efficientnet_b0', pretrained=True)"
+
+COPY thermal_analysis_node.py /ros2_ws/thermal_analysis_node.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /ros2_ws/thermal_analysis_node.py
+
+WORKDIR /ros2_ws
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python3", "/ros2_ws/thermal_analysis_node.py"]

@@ -1,0 +1,14 @@
+# BESS KISS-ICP + KISS-SLAM Container (ROS2 Humble)
+FROM docker.io/ros:humble
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    ros-humble-rviz2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# KISS-ICP pip package includes ROS2 launch files
+RUN pip3 install --no-cache-dir kiss-icp
+
+WORKDIR /ros2_ws
+ENTRYPOINT ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && exec \"$@\"", "--"]
+CMD ["bash"]

@@ -1,0 +1,26 @@
+# BESS Post-Processing Tools Container
+# evo, laspy, PDAL, Open3D, kiss-icp, COPC tools
+FROM docker.io/mambaorg/micromamba:1.5-jammy
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libgomp1 git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PDAL + python via conda with retry (large download, slow network)
+RUN for i in 1 2 3; do \
+    micromamba install -y -n base -c conda-forge \
+        python=3.12 pdal python-pdal numpy scipy matplotlib \
+    && break || echo "Attempt $i failed, retrying in 30s..." && sleep 30; \
+    done && micromamba clean -a -y
+
+RUN /opt/conda/bin/pip install --no-cache-dir \
+    evo \
+    laspy[lazrs] \
+    open3d \
+    kiss-icp \
+    pyntcloud
+
+ENV PATH="/opt/conda/bin:$PATH"
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

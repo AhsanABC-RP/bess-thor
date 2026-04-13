@@ -1,0 +1,17 @@
+# BESS Triton Inference Server
+# Consolidates all ML models on GPU 0 with TensorRT optimization
+# Models: YOLOv8n PII, SegFormer-B2, EfficientNet thermal
+#
+# Build: podman build -t localhost/bess-triton:humble .
+
+FROM nvcr.io/nvidia/tritonserver:24.10-py3
+
+# Model repository will be mounted at runtime
+RUN mkdir -p /models
+
+ENTRYPOINT ["tritonserver"]
+CMD ["--model-repository=/models", \
+     "--grpc-port=8001", \
+     "--http-port=8010", \
+     "--metrics-port=8002", \
+     "--log-verbose=0"]

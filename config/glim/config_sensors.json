@@ -1,0 +1,50 @@
+{
+  "sensors": {
+    "T_lidar_camera": [
+      -0.003,
+      -0.053,
+      0.001,
+      0.008,
+      0.726,
+      -0.003,
+      0.688
+    ],
+    "T_lidar_imu": [
+      -0.015,
+      0.0,
+      -0.20,
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    "autoconf_perpoint_times": true,
+    "autoconf_prefer_frame_time": false,
+    "distortion_coeffs": [
+      -0.023,
+      0.068,
+      -0.001,
+      0.001,
+      -0.033
+    ],
+    "distortion_model": "plumb_bob",
+    "global_shutter_camera": true,
+    "global_shutter_lidar": false,
+    "image_size": [
+      752,
+      480
+    ],
+    "imu_acc_noise": 0.002,
+    "imu_bias_noise": 1e-06,
+    "imu_gyro_noise": 0.0005,
+    "imu_int_noise": 0.0001,
+    "intensity_field": "intensity",
+    "intrinsics": [
+      815.5,
+      817.5,
+      830.3,
+      639.5
+    ],
+    "ring_field": ""
+  }
+}

@@ -1,0 +1,17 @@
+# BESS Ground Segmentation Container — Standalone Patchwork++
+# Publishes /ouster/points_nonground and /ouster/points_ground
+# Preserves ALL Ouster native point fields (48-byte point_step)
+#
+# Build: podman build -t localhost/bess-ground-seg:humble .
+
+FROM localhost/bess-base:humble
+
+RUN pip3 install --no-cache-dir numpy scipy
+
+COPY ground_segmentation_standalone.py /ros2_ws/ground_segmentation_standalone.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /ros2_ws/ground_segmentation_standalone.py
+
+WORKDIR /ros2_ws
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python3", "/ros2_ws/ground_segmentation_standalone.py"]

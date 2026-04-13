@@ -1,0 +1,31 @@
+# BESS SegFormer Semantic Segmentation Container
+# SegFormer-B2 Cityscapes (19 classes) on GPU 0 alongside YOLOv8n PII masking
+# (~800 MiB VRAM FP16). Uses bess-torch-ros:jazzy base (NGC PyTorch 25.08 +
+# ROS 2 Jazzy) for sm_110 kernels on Thor.
+#
+# Build:
+#   docker build -t localhost/bess-segformer:jazzy \
+#     -f containers/segformer/Containerfile containers/segformer
+
+FROM localhost/bess-torch-ros:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN pip3 install --no-cache-dir --break-system-packages \
+    transformers \
+    opencv-python-headless \
+    'numpy<2' \
+    'Pillow>=9.1.0'
+
+# Pre-download SegFormer-B2 Cityscapes weights
+RUN python3 -c "from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor; \
+    SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b2-finetuned-cityscapes-1024-1024'); \
+    SegformerImageProcessor.from_pretrained('nvidia/segformer-b2-finetuned-cityscapes-1024-1024')"
+
+COPY segformer_node.py /ros2_ws/segformer_node.py
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /ros2_ws/segformer_node.py
+
+WORKDIR /ros2_ws
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python3", "/ros2_ws/segformer_node.py"]

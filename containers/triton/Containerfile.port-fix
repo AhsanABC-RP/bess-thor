@@ -1,0 +1,11 @@
+# Temporary rebuild layer — fixes HTTP port to 8010 (port 8000 reserved for route-mapping)
+# This avoids re-pulling the 17GB NVIDIA base image.
+# On next full rebuild (deploy/05-container-build.sh), delete this file — the
+# canonical Containerfile already has the correct port.
+FROM localhost/bess-triton:humble
+
+CMD ["--model-repository=/models", \
+     "--grpc-port=8001", \
+     "--http-port=8010", \
+     "--metrics-port=8002", \
+     "--log-verbose=0"]
