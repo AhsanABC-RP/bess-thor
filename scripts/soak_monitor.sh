@@ -22,8 +22,13 @@ declare -A TOPICS=(
   [/blackfly/camera1/blackfly_camera/image_raw]="blackfly1:5"
   [/blackfly/camera2/blackfly_camera/image_raw]="blackfly2:5"
   [/dlio/odom_node/odom]="dlio:100"
+  [/rtcm]="ntrip:1"
 )
-CONTAINERS=(ouster microstrain lucid1 lucid2 thermal1 thermal2 thermal3 thermal4 blackfly1 blackfly2 dlio fast-lio recorder foxglove rutx)
+CONTAINERS=(ouster microstrain ntrip lucid1 lucid2 thermal1 thermal2 thermal3 thermal4 blackfly1 blackfly2 dlio fast-lio recorder foxglove rutx)
+# Minimum acceptable GQ7 GNSS fix_type. MIP fix codes:
+#   0=3D 1=2D 2=Time 3=None 4=Invalid 5=RTK Float 6=RTK Fixed
+# We require RTK Float (5) or better while NTRIP corrections are flowing.
+RTK_MIN_FIX=${RTK_MIN_FIX:-5}
 
 ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 say()   { echo "[$(ts)] $*" >> "$LOG"; }
@@ -40,6 +45,78 @@ sample_rate() {
   out=$(timeout 7 docker exec "$container" bash -lc \
     "source /opt/ros/$distro/setup.bash && timeout 5 ros2 topic hz --window 20 $topic 2>&1" 2>/dev/null || true)
   echo "$out" | awk '/average rate:/ { r=$3 } END { print (r?r:0) }'
+}
+
+# Read GQ7 GNSS fix_type. Returns the integer fix code (0..6) or -1 on error.
+# Sourced from microstrain container because that's where mip msgs are built.
+sample_rtk_fix_type() {
+  local out
+  out=$(timeout 8 docker exec microstrain bash -lc '
+    source /opt/ros/jazzy/setup.bash &&
+    source /ros2_ws/install/setup.bash &&
+    timeout 5 ros2 topic echo --once /mip/gnss_1/fix_info 2>/dev/null' 2>/dev/null || true)
+  echo "$out" | awk '/^fix_type:/ { print $2; found=1; exit } END { if (!found) print -1 }'
+}
+
+# Read GQ7 RTK corrections epoch_status to confirm at least one constellation
+# is currently being decoded by the receiver. Returns "1" if any of
+# gps/glonass/galileo/beidou _received is true, else "0".
+sample_rtk_corrections_active() {
+  local out
+  out=$(timeout 8 docker exec microstrain bash -lc '
+    source /opt/ros/jazzy/setup.bash &&
+    source /ros2_ws/install/setup.bash &&
+    timeout 5 ros2 topic echo --once /mip/gnss_corrections/rtk_corrections_status 2>/dev/null' 2>/dev/null || true)
+  echo "$out" | awk '
+    /gps_received: true/      { found=1 }
+    /glonass_received: true/  { found=1 }
+    /galileo_received: true/  { found=1 }
+    /beidou_received: true/   { found=1 }
+    END { print (found?1:0) }'
+}
+
+# Ouster PTP slave offset_from_master in nanoseconds (signed). Empty on error.
+# Polled directly from sensor HTTP API so it bypasses container/topic noise.
+sample_ouster_ptp_offset_ns() {
+  local out
+  out=$(timeout 5 curl -sf http://169.254.70.119/api/v1/time/ptp 2>/dev/null || true)
+  [[ -z $out ]] && { echo ""; return; }
+  python3 -c 'import sys,json
+try:
+  d=json.load(sys.stdin)
+  v=d.get("current_data_set",{}).get("offset_from_master","")
+  print(int(v) if v != "" else "")
+except Exception:
+  print("")' <<< "$out" 2>/dev/null
+}
+
+# spinnaker_camera_driver prints periodic stats lines containing "off[s]: <secs>"
+# from its underlying GenICam PTP slave servo. Returns the most recent value
+# from this container's logs in the last 70s, signed seconds, or empty.
+sample_spinnaker_ptp_offset_s() {
+  local container=$1
+  docker logs --since 70s "$container" 2>&1 \
+    | grep -oE 'off\[s\]:[[:space:]]*-?[0-9eE.+-]+' \
+    | tail -1 \
+    | awk -F: '{gsub(/[[:space:]]/,"",$2); print $2}'
+}
+
+# MikroTik CRS510 switch health. Returns "switch_c sfp_c board1_c board2_c"
+# space-separated integers, or empty on error. The sensor bay is sealed so
+# a cooling failure surfaces first at the SFP28 cages where all 10GigE
+# camera links terminate — watch these during long soaks.
+sample_mikrotik_temps() {
+  local out
+  out=$(timeout 5 sshpass -p '8RKUP2PUT9' ssh \
+    -o StrictHostKeyChecking=no -o ConnectTimeout=3 \
+    admin@169.254.100.254 '/system/health/print' 2>/dev/null || true)
+  [[ -z $out ]] && { echo ""; return; }
+  awk '
+    /switch-temperature/ { s=$3 }
+    /sfp-temperature/    { sp=$3 }
+    /board-temperature1/ { b1=$3 }
+    /board-temperature2/ { b2=$3 }
+    END { if (s!="" && sp!="") print s" "sp" "b1" "b2 }' <<< "$out"
 }
 
 : > "$LOG"
@@ -130,6 +207,7 @@ while (( $(date +%s) < DEADLINE )); do
         /blackfly/camera1/*) tag=bf1 ;;
         /blackfly/camera2/*) tag=bf2 ;;
         /dlio/*) tag=dlio ;;
+        /rtcm) tag=rtcm ;;
       esac
       rates="$rates ${tag}=${r}"
       if awk -v r="$r" -v e="$exp" 'BEGIN { exit !(r+0 < e*0.8) }'; then
@@ -138,6 +216,63 @@ while (( $(date +%s) < DEADLINE )); do
     done
     rm -rf "$tmpdir"
     status="$status RATES:$rates"
+
+    # PTP slave offset watchdog. With phc2sys -S 0 the host PHC1 never steps,
+    # so any sustained slave offset > PTP_MAX_OFFSET_MS means the slave servo
+    # is broken (firmware lockup, BMCA flap, switch non-transparency). Catch
+    # it during the soak rather than after extraction.
+    PTP_MAX_OFFSET_MS=${PTP_MAX_OFFSET_MS:-100}
+    ouster_ptp_ns=$(sample_ouster_ptp_offset_ns)
+    if [[ -n $ouster_ptp_ns ]]; then
+      status="$status ou_ptp=${ouster_ptp_ns}ns"
+      if awk -v n="$ouster_ptp_ns" -v lim="$PTP_MAX_OFFSET_MS" \
+          'BEGIN { exit !( (n<0?-n:n) > lim*1000000 ) }'; then
+        alert "Ouster PTP slave offset out of range: ${ouster_ptp_ns}ns (limit ${PTP_MAX_OFFSET_MS}ms)"
+      fi
+    else
+      status="$status ou_ptp=?"
+    fi
+    for c in blackfly1 blackfly2; do
+      off_s=$(sample_spinnaker_ptp_offset_s "$c")
+      [[ -z $off_s ]] && continue
+      status="$status ${c}_ptp=${off_s}s"
+      if awk -v s="$off_s" -v lim="$PTP_MAX_OFFSET_MS" \
+          'BEGIN { exit !( (s<0?-s:s) > lim/1000 ) }'; then
+        alert "$c PTP slave offset out of range: ${off_s}s (limit ${PTP_MAX_OFFSET_MS}ms)"
+      fi
+    done
+
+    # MikroTik switch health watchdog. Sealed sensor bay means a cooling
+    # failure manifests as SFP cage temps climbing before anything else
+    # fails. Alert before thermal shutdown rather than after.
+    MKTK_MAX_SFP_C=${MKTK_MAX_SFP_C:-80}
+    MKTK_MAX_SWITCH_C=${MKTK_MAX_SWITCH_C:-60}
+    mktk_temps=$(sample_mikrotik_temps)
+    if [[ -n $mktk_temps ]]; then
+      read sw_c sfp_c b1_c b2_c <<< "$mktk_temps"
+      status="$status mktk_sw=${sw_c}c mktk_sfp=${sfp_c}c mktk_b=${b1_c}/${b2_c}c"
+      if [[ $sfp_c =~ ^[0-9]+$ ]] && (( sfp_c > MKTK_MAX_SFP_C )); then
+        alert "MikroTik SFP cage ${sfp_c}C exceeds limit ${MKTK_MAX_SFP_C}C — check sensor-bay cooling"
+      fi
+      if [[ $sw_c =~ ^[0-9]+$ ]] && (( sw_c > MKTK_MAX_SWITCH_C )); then
+        alert "MikroTik switch ASIC ${sw_c}C exceeds limit ${MKTK_MAX_SWITCH_C}C"
+      fi
+    else
+      status="$status mktk=?"
+    fi
+
+    # GQ7 RTK fix-quality sampling. Only meaningful when ntrip container is up
+    # and /rtcm is being delivered to the GQ7 aux port. Codes:
+    #   0=3D 1=2D 2=Time 3=None 4=Invalid 5=RTKFloat 6=RTKFixed
+    rtk_fix=$(sample_rtk_fix_type)
+    rtk_corr=$(sample_rtk_corrections_active)
+    status="$status rtk_fix=${rtk_fix} rtk_corr=${rtk_corr}"
+    if [[ $rtk_fix -ge 0 ]] && (( rtk_fix < RTK_MIN_FIX )); then
+      alert "GQ7 RTK fix degraded: fix_type=${rtk_fix} (<${RTK_MIN_FIX} required) corrections_active=${rtk_corr}"
+    fi
+    if [[ $rtk_corr == 0 ]]; then
+      alert "GQ7 RTK corrections inactive: no constellation epoch_status received in last sample"
+    fi
   fi
 
   say "$status"

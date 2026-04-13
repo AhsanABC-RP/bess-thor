@@ -82,10 +82,12 @@ class LucidCameraNode(Node):
         self.get_logger().info(f"  Namespace: {ns}")
         self.get_logger().info(f"  Frame ID: {self.frame_id}")
 
-        # Connect to camera
+        # Connect to camera. Fail loudly so the process exits non-zero and the
+        # docker-compose bash while-true loop respawns us instead of leaving a
+        # ghost-alive python3 spinning forever in rclpy.spin() with no work.
         if not self.connect_camera():
             self.get_logger().error("Failed to connect to camera. Exiting.")
-            return
+            raise RuntimeError("lucid camera connect failed")
 
         # Start acquisition timer
         period = 1.0 / self.target_fps
@@ -366,14 +368,18 @@ def main(args=None):
         sys.exit(1)
 
     rclpy.init(args=args)
-    node = LucidCameraNode()
-
+    node = None
     try:
+        node = LucidCameraNode()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except Exception as e:
+        print(f"ERROR: lucid_node fatal: {e}", flush=True)
+        sys.exit(1)
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
         rclpy.shutdown()
 
 

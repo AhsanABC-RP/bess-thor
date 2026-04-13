@@ -33,9 +33,12 @@ x-common: &common
 
 x-healthcheck-ros2: &healthcheck-ros2
   interval: 30s
-  timeout: 15s
-  retries: 3
-  start_period: 60s
+  timeout: 20s
+  retries: 4
+  # Sensor data-flow healthchecks subscribe to a topic for ~4s. Cold boot
+  # gives drivers time to enumerate/calibrate (Spinnaker thermals: ~30s,
+  # Lucid Arena: ~15s, Blackfly GigE heartbeat: ~20s) before failures count.
+  start_period: 120s
 
 services:
   # ===========================================================================
@@ -49,6 +52,7 @@ services:
       - ./config/ouster/params.yaml:/params.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -64,7 +68,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "os_driver"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/ouster/points", "1"]
     profiles:
       - lidar
       - sensors
@@ -72,30 +76,112 @@ services:
       - full
 
   # ===========================================================================
-  # SENSORS - IMU (MicroStrain GQ7 via Moxa TCP)
+  # SENSORS - IMU (MicroStrain GQ7 via direct USB — main: /dev/ttyACM0, aux: /dev/ttyACM1)
   # ===========================================================================
   microstrain:
     <<: *common
     image: localhost/bess-microstrain:jazzy
     container_name: microstrain
+    # Mount stable udev symlinks (see /etc/udev/rules.d/99-microstrain.rules).
+    # The GQ7 USB device numbers (ttyACM0/1/2…) shuffle on every replug or
+    # USB hub re-enumeration; pinning by symlink survives that. udev resolves
+    # the symlinks at compose-time so the container sees /dev/ttyACM<N>.
     devices:
-      - /dev/ttyACM0:/dev/ttyACM0
-      - /dev/ttyACM1:/dev/ttyACM1
+      - /dev/microstrain_main:/dev/microstrain_main
+      - /dev/microstrain_aux:/dev/microstrain_aux
     volumes:
       - ./config:/ros2_ws/config:ro
       - ./config/microstrain/launch_imu.py:/ros2_ws/launch_imu.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
       - |
         source /opt/ros/jazzy/setup.bash
         source /ros2_ws/install/setup.bash
-        exec ros2 launch /ros2_ws/launch_imu.py port:=/dev/ttyACM0 aux_port:=/dev/ttyACM1
+        # Docker's --device resolves host symlinks at startup, so the stable
+        # /dev/microstrain_{main,aux} names are NOT preserved inside the
+        # container. Resolve which ttyACM is which at startup by reading the
+        # USB serial via sysfs (main has prefix "0000", aux has "2-00") and
+        # export the matching paths into MAIN_PORT / AUX_PORT.
+        resolve_port() {
+          local prefix=$$1
+          for dev in /dev/ttyACM*; do
+            local base
+            base=$$(basename "$$dev")
+            local serial
+            serial=$$(cat "/sys/class/tty/$$base/device/../serial" 2>/dev/null || true)
+            if [[ $$serial == $${prefix}* ]]; then
+              echo "$$dev"
+              return 0
+            fi
+          done
+          return 1
+        }
+        # MIP SDK occasionally catches a ttyACM HUP and stays alive in an
+        # error spin loop without publishing — wrap in a while-true so the
+        # data-flow healthcheck can fail and Docker restarts the container.
+        while true; do
+          MAIN_PORT=$$(resolve_port "0000") || { echo "[microstrain] no ttyACM with serial 0000* (main)"; sleep 5; continue; }
+          AUX_PORT=$$(resolve_port "2-00")  || { echo "[microstrain] no ttyACM with serial 2-00* (aux)";  sleep 5; continue; }
+          echo "[microstrain] Starting MIP driver: main=$$MAIN_PORT aux=$$AUX_PORT"
+          ros2 launch /ros2_ws/launch_imu.py port:=$$MAIN_PORT aux_port:=$$AUX_PORT || true
+          echo "[microstrain] launch exited, restarting in 5s..."
+          sleep 5
+        done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "microstrain_ine"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/imu/data", "10"]
+    profiles:
+      - imu
+      - sensors
+      - dev
+
+  # ===========================================================================
+  # NTRIP RTK Corrections Client (SmartNET UK → /rtcm → microstrain aux)
+  # ===========================================================================
+  # Pulls RTCM3 corrections from uk.nrtk.eu:7801 (VRS mountpoint MSM_i-MAX),
+  # subscribes to /gnss_1/llh_position for GGA feedback (VRS needs it), and
+  # publishes rtcm_msgs/Message to /rtcm. The microstrain driver (which has
+  # ntrip_interface_enable=true in params.yaml) is subscribed to /rtcm and
+  # forwards RTCM bytes to the GQ7 aux port (/dev/ttyACM1).
+  ntrip:
+    <<: *common
+    image: localhost/bess-microstrain:jazzy
+    container_name: ntrip
+    volumes:
+      - ./config/ntrip/ntrip_ros2.py:/ros2_ws/ntrip_ros2.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
+    environment:
+      <<: *common-env
+      NTRIP_HOST: uk.nrtk.eu
+      NTRIP_PORT: "7801"
+      NTRIP_MOUNTPOINT: MSM_iMAX
+      NTRIP_USER: XRI003
+      NTRIP_PASS: "23705"
+      GGA_INTERVAL: "10"
+      DEFAULT_LAT: "53.4437"
+      DEFAULT_LON: "-0.7207"
+      DEFAULT_ALT: "70.0"
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash
+        while true; do
+          echo "[ntrip] Starting NTRIP client..."
+          python3 /ros2_ws/ntrip_ros2.py || true
+          echo "[ntrip] exited, restarting in 10s..."
+          sleep 10
+        done
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/rtcm", "0.5"]
     profiles:
       - imu
       - sensors
@@ -113,7 +199,7 @@ services:
       - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -133,7 +219,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "python3"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/thermal/camera1/image_raw", "5"]
     profiles:
       - thermal
       - sensors
@@ -148,6 +234,7 @@ services:
       - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -167,7 +254,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "python3"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/thermal/camera2/image_raw", "5"]
     profiles:
       - thermal
       - sensors
@@ -185,6 +272,7 @@ services:
       - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -205,7 +293,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "python3"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/thermal/camera3/image_raw", "5"]
     profiles:
       - thermal
       - sensors
@@ -220,6 +308,7 @@ services:
       - ./dockerfiles/thermal/thermal_spinnaker_node_patched.py:/ros2_ws/thermal_spinnaker_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -240,7 +329,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "python3"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/thermal/camera4/image_raw", "5"]
     profiles:
       - thermal
       - sensors
@@ -258,6 +347,7 @@ services:
       - ./containers/lucid/lucid_node.py:/ros2_ws/lucid_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -279,7 +369,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "python3"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/lucid1/camera_driver/image_raw", "1"]
     profiles:
       - lucid
       - rgb
@@ -295,6 +385,7 @@ services:
       - ./containers/lucid/lucid_node.py:/ros2_ws/lucid_node.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -316,7 +407,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "python3"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/lucid2/camera_driver/image_raw", "1"]
     profiles:
       - lucid
       - rgb
@@ -346,6 +437,7 @@ services:
     volumes:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/blackfly_s_thor.yaml:/config/blackfly_s_thor.yaml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -391,7 +483,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "camera_driver_n"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/blackfly/camera1/blackfly_camera/image_raw", "2"]
     profiles:
       - blackfly
       - rgb
@@ -406,6 +498,7 @@ services:
     volumes:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/blackfly_s_thor.yaml:/config/blackfly_s_thor.yaml:ro
+      - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
     command:
       - bash
       - -c
@@ -450,7 +543,7 @@ services:
         done
     healthcheck:
       <<: *healthcheck-ros2
-      test: ["CMD", "pgrep", "-x", "camera_driver_n"]
+      test: ["CMD", "/usr/local/bin/healthcheck_topic.sh", "/blackfly/camera2/blackfly_camera/image_raw", "2"]
     profiles:
       - blackfly
       - rgb

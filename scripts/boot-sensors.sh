@@ -23,9 +23,13 @@ IFACE="mgbe0_0"
 
 # IPs
 ip addr show $IFACE | grep -q "169.254.100.1" || ip addr add 169.254.100.1/16 dev $IFACE
-ip addr show $IFACE | grep -q "192.168.1.50"  || ip addr add 192.168.1.50/24 dev $IFACE
 ip addr show $IFACE | grep -q "192.168.2.50"  || ip addr add 192.168.2.50/24 dev $IFACE
 ip addr show $IFACE | grep -q "192.168.127.1" || ip addr add 192.168.127.1/24 dev $IFACE
+# 192.168.1.50/24 was removed 2026-04-13: RUT50 is on MikroTik sfp28-12 in
+# bridgeWAN (not bridgeLocal), so Thor has no direct L2 path to 192.168.1.0/24.
+# Thor reaches RUT50 by routing through MikroTik (169.254.100.254) which
+# masquerade-NATs out bridgeWAN. See STEP 3.5 below.
+ip addr del 192.168.1.50/24 dev $IFACE 2>/dev/null
 
 # MTU (needs link bounce)
 CUR_MTU=$(ip link show $IFACE | grep -oP 'mtu \K[0-9]+')
@@ -119,6 +123,50 @@ else
     # All sensor ports sfp28-1 to sfp28-8 in bridgeLocal (saved in RouterOS)
     eval $MKTK '"/interface bridge set bridgeLocal protocol-mode=none"' 2>/dev/null
     LOG "MikroTik OK"
+fi
+
+# ============================================================
+# STEP 3.5: WAN uplink via RUT50 (Teltonika 5G router) through MikroTik
+# ============================================================
+# Topology (corrected 2026-04-13 18:00):
+#   RUT50 LAN (1G copper) → MikroTik sfp28-12 (S-RJ01 module) → bridgeWAN
+#   MikroTik has DHCP client on bridgeWAN (lease 192.168.1.191/24 from RUT50)
+#   MikroTik has srcnat masquerade rule out-interface=bridgeWAN (pre-configured)
+#   Thor reaches internet by sending via 169.254.100.254 → MikroTik NATs to RUT50
+#
+# bridgeWAN is deliberately NOT bridged into bridgeLocal (would create a second
+# DHCP server racing with our dnsmasq on the sensor L2). Instead MikroTik acts
+# as a router between bridgeLocal (sensors + Thor) and bridgeWAN (RUT50 uplink).
+#
+# Guarded on "MikroTik reachable AND MikroTik itself can reach 1.1.1.1" so this
+# is a no-op when the RUT50 5G carrier is not delivering packets — we don't
+# want to replace a working eero route with a dead cellular path.
+LOG "=== STEP 3.5: RUT50 WAN uplink via MikroTik ==="
+GW=169.254.100.254
+if ping -c1 -W1 $GW >/dev/null 2>&1; then
+    # Probe internet reachability from the MikroTik itself. This tests the
+    # entire cellular path without depending on Thor's default route selection.
+    if eval $MKTK '"/tool ping 1.1.1.1 count=2 interface=bridgeWAN"' 2>/dev/null \
+           | grep -q 'received=[12]'; then
+        LOG "RUT50 5G uplink healthy (MikroTik can reach 1.1.1.1 via bridgeWAN)"
+        ip route del default via $GW dev $IFACE metric 50 2>/dev/null
+        if ip route add default via $GW dev $IFACE metric 50 2>/dev/null; then
+            LOG "Default route installed: default via $GW dev $IFACE metric 50"
+            if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
+                LOG "Internet reachable from Thor via RUT50 (1.1.1.1 OK)"
+            else
+                LOG "WARN: route installed but Thor cannot ping 1.1.1.1 — check rp_filter / NAT"
+            fi
+        else
+            LOG "WARN: failed to install default route via $GW"
+        fi
+    else
+        LOG "WARN: MikroTik cannot reach 1.1.1.1 via bridgeWAN — RUT50 5G not carrying traffic"
+        LOG "  Check RUT50: SIM inserted, APN configured, 5G registered, data plan active"
+        LOG "  (boot continues; default route stays as whatever else is present)"
+    fi
+else
+    LOG "WARN: MikroTik unreachable — cannot install RUT50 default route"
 fi
 
 # ============================================================

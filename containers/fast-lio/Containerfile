@@ -1,0 +1,84 @@
+# BESS FAST-LIO2 Container — Thor (ROS 2 Jazzy)
+# Tightly-coupled LiDAR-inertial odometry for Ouster OS1-128 + MicroStrain GQ7.
+# Runs in parallel with DLIO; GLIM is deprecated on Thor (too sparse).
+#
+# Base: localhost/bess-base:jazzy (CUDA devel + ROS 2 Jazzy + pcl_ros already).
+# Ouster patch: FAST-LIO's preprocess.h declares ring as uint8_t, but the
+# Ouster driver publishes uint16_t — without the cast fix, the ring field is
+# dropped and the point cloud deserializes wrong.
+#
+# Build:
+#   docker build -t localhost/bess-fast-lio:jazzy \
+#     -f containers/fast-lio/Containerfile containers/fast-lio
+
+FROM localhost/bess-base:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    libeigen3-dev \
+    libpcl-dev \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libomp-dev \
+    python3-scipy \
+    python3-numpy \
+    ros-jazzy-pcl-ros \
+    ros-jazzy-pcl-conversions \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /ros2_ws/src
+
+# FAST-LIO2 ROS 2 port (with ikd-Tree submodule)
+RUN git clone --recursive https://github.com/Ericsii/FAST_LIO.git
+
+# Ouster compatibility patch: ring field uint8_t -> uint16_t
+RUN sed -i 's/uint8_t ring;/uint16_t ring;/' /ros2_ws/src/FAST_LIO/src/preprocess.h \
+ && sed -i 's/(std::uint8_t, ring, ring)/(std::uint16_t, ring, ring)/' /ros2_ws/src/FAST_LIO/src/preprocess.h
+
+# QoS patch: IMU subscription defaults to RELIABLE (depth=10) which doesn't
+# match Ouster /ouster/imu publisher (BEST_EFFORT SensorDataQoS). Force the
+# IMU subscription to SensorDataQoS so it pairs with /ouster/imu cleanly.
+RUN sed -i 's|create_subscription<sensor_msgs::msg::Imu>(imu_topic, 10, imu_cbk)|create_subscription<sensor_msgs::msg::Imu>(imu_topic, rclcpp::SensorDataQoS(), imu_cbk)|' /ros2_ws/src/FAST_LIO/src/laserMapping.cpp
+
+# IMU rewind tolerance: Ouster /ouster/imu in TIME_FROM_ROS_TIME mode bundles
+# imu_packets_per_frame=8 and stamps each by reception time; adjacent samples
+# can differ by <1ms and occasionally arrive out-of-order by ~150us. Strict
+# `timestamp < last` wipes the buffer on every such jitter and starves
+# FAST-LIO's EKF. Tolerate rewinds smaller than 10ms — only treat a genuine
+# multi-ms backward jump as a true buffer-reset event.
+RUN sed -i 's|if (timestamp < last_timestamp_imu)|if (timestamp < last_timestamp_imu - 0.01)|' /ros2_ws/src/FAST_LIO/src/laserMapping.cpp
+
+# Stub livox_ros_driver2 to satisfy FAST-LIO's compile-time dep without
+# pulling the real Livox driver (we only use Ouster)
+RUN mkdir -p livox_ros_driver2/msg \
+ && printf 'cmake_minimum_required(VERSION 3.8)\nproject(livox_ros_driver2)\nfind_package(ament_cmake REQUIRED)\nfind_package(rosidl_default_generators REQUIRED)\nfind_package(std_msgs REQUIRED)\nfind_package(builtin_interfaces REQUIRED)\nrosidl_generate_interfaces(${PROJECT_NAME} "msg/CustomMsg.msg" "msg/CustomPoint.msg" DEPENDENCIES std_msgs builtin_interfaces)\nament_package()\n' > livox_ros_driver2/CMakeLists.txt \
+ && printf '<?xml version="1.0"?><package format="3"><name>livox_ros_driver2</name><version>1.0.0</version><description>Stub</description><maintainer email="stub@example.com">BESS</maintainer><license>MIT</license><buildtool_depend>ament_cmake</buildtool_depend><buildtool_depend>rosidl_default_generators</buildtool_depend><depend>std_msgs</depend><depend>builtin_interfaces</depend><member_of_group>rosidl_interface_packages</member_of_group><export><build_type>ament_cmake</build_type></export></package>\n' > livox_ros_driver2/package.xml \
+ && printf 'std_msgs/Header header\nuint64 timebase\nuint32 point_num\nuint8 lidar_id\nuint8[3] rsvd\nCustomPoint[] points\n' > livox_ros_driver2/msg/CustomMsg.msg \
+ && printf 'uint32 offset_time\nfloat32 x\nfloat32 y\nfloat32 z\nuint8 reflectivity\nuint8 tag\nuint8 line\n' > livox_ros_driver2/msg/CustomPoint.msg
+
+WORKDIR /ros2_ws
+RUN apt-get update \
+ && rosdep install --from-paths src --ignore-src -r -y \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN bash -c "source /opt/ros/jazzy/setup.bash && \
+    colcon build --symlink-install \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_FLAGS='-O3 -march=native -fopenmp'"
+
+COPY fast_lio_single.yaml /ros2_ws/config/fast_lio_single.yaml
+COPY launch_fast_lio_single.py /ros2_ws/launch_fast_lio_single.py
+COPY imu_guard.py /ros2_ws/imu_guard.py
+COPY scancontext_node.py /ros2_ws/scancontext_node.py
+
+ENV ROS_DOMAIN_ID=0
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV FAST_LIO_CONFIG=/ros2_ws/config/fast_lio_single.yaml
+
+RUN printf '#!/bin/bash\nset -e\nsource /opt/ros/jazzy/setup.bash\nsource /ros2_ws/install/setup.bash\nexec "$@"\n' > /ros2_ws/entrypoint.sh \
+ && chmod +x /ros2_ws/entrypoint.sh
+
+ENTRYPOINT ["/ros2_ws/entrypoint.sh"]
+CMD ["ros2", "launch", "/ros2_ws/launch_fast_lio_single.py"]

@@ -2,15 +2,17 @@ ouster/os_driver:
   ros__parameters:
     sensor_hostname: "169.254.70.119"
     lidar_mode: "2048x10"
-    # TIME_FROM_PTP_1588: use the sensor's hardware PTP clock (synced to
-    # Thor's mgbe0_0 PHC1 grandmaster via ptp4l/phc2sys). Produces true
-    # hardware-timestamped LiDAR points and IMU with sub-microsecond
-    # alignment to every other PTP-synced sensor (A6701, Blackfly, Lucid).
-    # Per tcpdump, the Ouster has been emitting delay_req all along — it
-    # picks up our GM as soon as this mode is set. History: in 2026-04
-    # this was briefly flipped to TIME_FROM_ROS_TIME as a stopgap because
-    # no grandmaster existed on Thor — now fixed by ptp4l-mgbe0.service.
-    timestamp_mode: "TIME_FROM_PTP_1588"
+    # TIME_FROM_ROS_TIME stopgap (2026-04-13 post-reboot):
+    # System booted with RTC=1970; ptp4l + phc2sys initialized PHC1 from
+    # that, then user fixed wall clock to 2026. phc2sys runs with -S 0
+    # (never step) so PHC is pinned 56 years behind REALTIME at the
+    # servo rail and will never converge. Ouster firmware slave is
+    # locked to the stale GM, making /ouster/points stamps ~1970 while
+    # /imu/data (GQ7) is 2026 — DLIO diverged with "Bad time sync between
+    # LiDAR and IMU". Switching to ROS time realigns all sensors on wall
+    # clock until PHC can be re-anchored (needs phc_ctl step + Ouster
+    # firmware PTP re-acquire, ideally with a sensor power cycle).
+    timestamp_mode: "TIME_FROM_ROS_TIME"
     # Driver default is -37.0 (assumes PTP time is TAI and converts to UTC by
     # subtracting the leap-second offset). Our ptp4l-bess.conf advertises
     # currentUtcOffset=0 and our PHC is disciplined to CLOCK_REALTIME (UTC)

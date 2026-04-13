@@ -1,0 +1,22 @@
+[Unit]
+Description=BESS Thor cold-boot HTTP time bootstrap (pre-TLS)
+Documentation=file:///home/thor/CLAUDE.md
+# Must run AFTER basic networking is up but BEFORE anything TLS-dependent
+# and BEFORE the PTP services anchor the PHC to a stale REALTIME.
+After=network-online.target
+Wants=network-online.target
+Before=ptp4l-mgbe0.service phc2sys-mgbe0.service docker.service
+ConditionPathExists=/usr/local/sbin/bess-time-bootstrap
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/bess-time-bootstrap
+# Failure is non-fatal — downstream services will retry on their own and
+# tailscaled / apt / the Claude CLI will recover once the clock is fixed
+# by any other means.
+SuccessExitStatus=0 1
+TimeoutStartSec=240s
+
+[Install]
+WantedBy=multi-user.target

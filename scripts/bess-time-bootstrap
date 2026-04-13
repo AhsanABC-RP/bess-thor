@@ -1,0 +1,155 @@
+#!/bin/bash
+# BESS Thor cold-boot time bootstrap — ALWAYS verify wall clock against HTTP
+#
+# Problem: Thor's wall clock can come up wrong in several ways after a
+# reboot / force-reset:
+#   (a) dead RTC -> 1970 -> every TLS cert is "not yet valid" -> deadlock
+#   (b) RTC reports a time hours/days off reality (observed 2026-04-13:
+#       RTC was ~3.5h ahead of real time after a "force reset", cause
+#       unknown; not a manual date -s)
+#   (c) RTC drifts over long power-off periods
+#
+# systemd-timesyncd is masked (protects PHC1 from NTP step events that
+# break the Ouster firmware slave), so nothing else disciplines the clock
+# once the system is up. ptp4l/phc2sys run with `-S 0` (never step) and
+# will anchor PHC from whatever REALTIME was when they started, meaning
+# a single bad boot-time clock poisons PTP for the whole session.
+#
+# Fix: at every boot, BEFORE tailscaled / docker / ptp4l run, fetch the
+# real time from HTTP Date headers (plain HTTP, no TLS — the whole point
+# is that TLS may be broken if the clock is wrong) and step the wall
+# clock to match. No pre-2024 guard: we also correct small persistent
+# drifts, not just the dead-RTC case.
+#
+# Usage:
+#   bess-time-bootstrap           # real run
+#   bess-time-bootstrap --check   # dry-run: fetch + parse + report, no step
+
+set -eu
+
+DRY_RUN=0
+if [ "${1:-}" = "--check" ] || [ "${1:-}" = "--dry-run" ]; then
+    DRY_RUN=1
+fi
+
+# Step if fetched HTTP time differs from wall clock by more than this.
+# 60s comfortably covers boot-time RTC jitter and one-way HTTP latency,
+# while still catching any genuine bad-clock state.
+THRESHOLD_SEC=${THRESHOLD_SEC:-60}
+
+LOG() {
+    logger -t bess-time-bootstrap "$*" 2>/dev/null || true
+    echo "[bess-time-bootstrap] $*" >&2
+}
+
+# Sources ordered by preference. Must speak plain HTTP on port 80.
+# time.cloudflare.com is HTTPS/NTS-only so it's deliberately not here.
+# detectportal.firefox.com caches Date heavily, so it's NOT used either.
+# 1.1.1.1 (Cloudflare) and www.google.com are both edge-NTP-backed and
+# return the real server time with each HEAD request.
+SOURCES=(
+    "http://1.1.1.1"
+    "http://www.google.com"
+    "http://www.ubuntu.com"
+    "http://nav.smith-micro.com"
+)
+
+# Quorum: require at least 2 sources that agree within this many seconds
+# before stepping. Prevents a single rogue cached edge server from
+# stepping the clock to garbage.
+QUORUM_SPREAD_SEC=${QUORUM_SPREAD_SEC:-30}
+
+fetch_one() {
+    local src=$1
+    local http_date
+    http_date=$(curl -sSI --max-time 5 "$src" 2>/dev/null \
+        | grep -i '^date:' \
+        | head -1 \
+        | sed 's/^[Dd]ate: //' \
+        | tr -d '\r\n')
+    [ -z "$http_date" ] && return 1
+    date -d "$http_date" +%s 2>/dev/null || return 1
+}
+
+collect_samples() {
+    local samples=()
+    for src in "${SOURCES[@]}"; do
+        local e
+        e=$(fetch_one "$src" || echo "")
+        if [ -n "$e" ] && [ "$e" -gt 1700000000 ]; then
+            samples+=("$e:$src")
+        fi
+    done
+    printf '%s\n' "${samples[@]}"
+}
+
+CUR_EPOCH=$(date +%s)
+LOG "wall clock is $(date -u --iso-8601=seconds) (epoch $CUR_EPOCH)"
+
+# Up to ~3 minutes of retries. Covers MikroTik boot + RUT50 5G registration.
+for outer in $(seq 1 18); do
+    mapfile -t samples < <(collect_samples)
+
+    if [ "${#samples[@]}" -lt 2 ]; then
+        LOG "  pass $outer/18: only ${#samples[@]} source(s) responded, retrying"
+        sleep 10
+        continue
+    fi
+
+    # Find the tightest quorum: sort by epoch, look for any pair within
+    # QUORUM_SPREAD_SEC. First matching pair wins.
+    mapfile -t sorted < <(printf '%s\n' "${samples[@]}" | sort -n)
+    quorum_epoch=""
+    quorum_src=""
+    for ((i=0; i<${#sorted[@]}-1; i++)); do
+        a=${sorted[$i]%%:*};    a_src=${sorted[$i]##*:}
+        b=${sorted[$((i+1))]%%:*}; b_src=${sorted[$((i+1))]##*:}
+        if (( b - a <= QUORUM_SPREAD_SEC )); then
+            # Use the later of the two (more recent response).
+            quorum_epoch=$b
+            quorum_src="$b_src (agreed with $a_src, spread $((b-a))s)"
+            break
+        fi
+    done
+
+    if [ -z "$quorum_epoch" ]; then
+        LOG "  pass $outer/18: ${#samples[@]} sources responded but none agree within ${QUORUM_SPREAD_SEC}s"
+        for s in "${sorted[@]}"; do LOG "    $s"; done
+        sleep 10
+        continue
+    fi
+
+    delta=$((quorum_epoch - CUR_EPOCH))
+    abs=${delta#-}
+
+    LOG "quorum time from $quorum_src = $(date -u -d "@$quorum_epoch" --iso-8601=seconds)"
+    LOG "  delta = ${delta}s (abs ${abs}s, threshold ${THRESHOLD_SEC}s)"
+
+    if [ "$abs" -le "$THRESHOLD_SEC" ]; then
+        LOG "wall clock within threshold, no step needed"
+        exit 0
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        LOG "DRY-RUN: would step wall clock by ${delta}s to $(date -u -d "@$quorum_epoch" --iso-8601=seconds)"
+        exit 0
+    fi
+
+    LOG "stepping wall clock: ${delta}s"
+    date -s "@$quorum_epoch" >/dev/null
+    # Persist to hardware RTC so subsequent boots start from correct time
+    # even if HTTP is unavailable at the next boot.
+    if hwclock --systohc --utc 2>/dev/null; then
+        LOG "hwclock --systohc ok"
+    else
+        LOG "hwclock --systohc failed (Tegra RTC driver path — fake-hwclock fallback if installed)"
+    fi
+    if [ -x /usr/sbin/fake-hwclock ]; then
+        fake-hwclock save 2>/dev/null || true
+    fi
+    LOG "wall clock now $(date -u --iso-8601=seconds)"
+    exit 0
+done
+
+LOG "FAILED: no quorum after 18 passes (~3 min). Leaving wall clock as-is."
+exit 1

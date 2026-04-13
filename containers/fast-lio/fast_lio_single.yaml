@@ -1,0 +1,57 @@
+# BESS FAST-LIO2 Config — Thor (Ouster OS1-128 + MicroStrain GQ7)
+# Ericsii ROS 2 port expects nested (common/preprocess/mapping/publish)
+# sections — a flat layout silently falls back to Livox defaults and segfaults
+# on Ouster PointCloud2 msgs. See FAST_LIO/config/ouster64.yaml for the
+# upstream reference this is derived from.
+
+/**:
+  ros__parameters:
+    feature_extract_enable: false
+    point_filter_num: 1
+    max_iteration: 3
+    filter_size_surf: 0.5
+    filter_size_map: 0.5
+    cube_side_length: 1000.0
+    runtime_pos_log_enable: false
+    map_file_path: "/tmp/fast_lio.pcd"
+
+    common:
+      lid_topic: "/ouster/points"
+      # Use Ouster's built-in IMU — shares PTP clock with point cloud.
+      # /imu/data_guarded (GQ7) is on system wall time, which does NOT match
+      # Ouster's PTP clock (currently ~318 days stale with no PTP master).
+      # DLIO uses /ouster/imu for the same reason. Revisit once PTP is synced.
+      imu_topic: "/ouster/imu"
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    preprocess:
+      lidar_type: 3                    # 1=Livox, 2=Velodyne, 3=Ouster
+      scan_line: 128                   # OS1-128
+      timestamp_unit: 3                # Ouster driver publishes t in nanoseconds
+      blind: 1.0                       # Minimum range (meters)
+
+    mapping:
+      acc_cov: 0.1
+      gyr_cov: 0.1
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+      fov_degree: 360.0
+      det_range: 150.0
+      extrinsic_est_en: true
+      # Ouster internal IMU sits inside the sensor body — translation is
+      # ~0 for OS1. extrinsic_est_en=true lets FAST-LIO refine online.
+      extrinsic_T: [0.0, 0.0, 0.0]
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+
+    publish:
+      path_en: true
+      scan_publish_en: true
+      dense_publish_en: true
+      scan_bodyframe_pub_en: true
+
+    pcd_save:
+      pcd_save_en: false
+      interval: -1
