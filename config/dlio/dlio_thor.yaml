@@ -5,8 +5,13 @@
 /**:
   ros__parameters:
     use_sim_time: false
-    frames/odom: odom
-    frames/baselink: base_link
+    # DLIO publishes to dlio_* frames so it doesn't fight FAST-LIO2 for
+    # ownership of base_link in the TF tree. Both SLAMs can run in parallel
+    # for comparison; Foxglove should point at base_link (owned by FAST-LIO2
+    # via the camera_init -> body -> base_link static chain) for the primary
+    # view, and at dlio_base_link for DLIO's alternative path.
+    frames/odom: dlio_odom
+    frames/baselink: dlio_base_link
     frames/lidar: os_lidar
     frames/imu: imu_link
 

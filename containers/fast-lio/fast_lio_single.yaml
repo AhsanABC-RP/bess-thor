@@ -51,6 +51,13 @@
       scan_publish_en: true
       dense_publish_en: true
       scan_bodyframe_pub_en: true
+      # map_en: true is NEVER safe on this rig. FAST-LIO2's publish_map()
+      # accumulates points into pcl_wait_pub with ZERO voxel filtering and
+      # re-publishes the whole cloud every scan. After a couple minutes the
+      # /Laser_map message exceeds 100 MB and chokes CycloneDDS fragment
+      # reassembly — small topics stop delivering too. Use the downstream
+      # slam_map_voxel accumulator service for a bounded unified map.
+      map_en: false
 
     pcd_save:
       pcd_save_en: false

@@ -101,6 +101,28 @@ sample_spinnaker_ptp_offset_s() {
     | awk -F: '{gsub(/[[:space:]]/,"",$2); print $2}'
 }
 
+# FLIR thermal camera internal temperatures. The patched thermal_spinnaker_node
+# reads SensorTemperature (FPA) + HousingTemperature from the A6701/A70
+# GenICam nodemap every 15s and publishes sensor_msgs/Temperature on
+# /thermal/cameraN/temperature and /thermal/cameraN/housing_temperature.
+# This is the primary thermal-stress signal for the sealed sensor bay —
+# cooling failures will show at FPA + housing before the rate drops.
+#
+# Returns "fpa_c housing_c" or empty on error.
+sample_thermal_cam_temps() {
+  local container=$1 cam_ns=$2 distro out_fpa out_hsg
+  distro=$(ros_distro_of "$container")
+  [[ -z $distro ]] && { echo ""; return; }
+  out_fpa=$(timeout 5 docker exec "$container" bash -lc \
+    "source /opt/ros/$distro/setup.bash && timeout 4 ros2 topic echo --once --field temperature /thermal/${cam_ns}/temperature 2>/dev/null" 2>/dev/null || true)
+  out_hsg=$(timeout 5 docker exec "$container" bash -lc \
+    "source /opt/ros/$distro/setup.bash && timeout 4 ros2 topic echo --once --field temperature /thermal/${cam_ns}/housing_temperature 2>/dev/null" 2>/dev/null || true)
+  out_fpa=$(echo "$out_fpa" | tr -d '[:space:]')
+  out_hsg=$(echo "$out_hsg" | tr -d '[:space:]')
+  [[ -z $out_fpa && -z $out_hsg ]] && { echo ""; return; }
+  echo "${out_fpa:-?} ${out_hsg:-?}"
+}
+
 # MikroTik CRS510 switch health. Returns "switch_c sfp_c board1_c board2_c"
 # space-separated integers, or empty on error. The sensor bay is sealed so
 # a cooling failure surfaces first at the SFP28 cages where all 10GigE
@@ -260,6 +282,49 @@ while (( $(date +%s) < DEADLINE )); do
     else
       status="$status mktk=?"
     fi
+
+    # FLIR thermal camera internal DeviceTemperature, published by the patched
+    # thermal_spinnaker_node on /thermal/cameraN/temperature.
+    #
+    # Two very different physical readings share the same topic:
+    #
+    #   - A6701 Xsc (thermal1/thermal2): cooled InSb MWIR. DeviceTemperature
+    #     is the Stirling-cooled FPA in °C. Healthy is ~-200°C (~73K, LN2-
+    #     adjacent). A *rising* reading means the Stirling cooler is failing;
+    #     above about -150°C the detector is unusable. Alert high, not low.
+    #
+    #   - A70 (thermal3/thermal4): uncooled microbolometer LWIR. Device-
+    #     Temperature is body temperature in °C (device reports Kelvin, node
+    #     converts). Healthy 25-50°C under load; alert above 75°C.
+    #
+    # Samples 2 cameras per tick (thermal1=A6701, thermal3=A70); thermal2/4
+    # share thermal mass and sampling all four doubles ros2 exec cost.
+    A6701_FPA_ALERT_C=${A6701_FPA_ALERT_C:--150}   # above this = cooler fail
+    A70_FPA_ALERT_C=${A70_FPA_ALERT_C:-75}         # above this = bay too hot
+    for pair in "thermal1:camera1:A6701" "thermal3:camera3:A70"; do
+      ct=${pair%%:*}
+      rest=${pair#*:}
+      cns=${rest%%:*}
+      family=${pair##*:}
+      tct=$(sample_thermal_cam_temps "$ct" "$cns")
+      if [[ -n $tct ]]; then
+        read fpa_c _hsg_unused <<< "$tct"
+        status="$status ${ct}_fpa=${fpa_c}c"
+        if [[ $family == A6701 ]]; then
+          if awk -v v="$fpa_c" -v lim="$A6701_FPA_ALERT_C" \
+              'BEGIN { exit !(v+0 > lim+0) }' 2>/dev/null; then
+            alert "$ct (A6701) FPA ${fpa_c}C above ${A6701_FPA_ALERT_C}C — Stirling cryocooler failure"
+          fi
+        else
+          if awk -v v="$fpa_c" -v lim="$A70_FPA_ALERT_C" \
+              'BEGIN { exit !(v+0 > lim+0) }' 2>/dev/null; then
+            alert "$ct (A70) body ${fpa_c}C exceeds ${A70_FPA_ALERT_C}C — sensor bay cooling check"
+          fi
+        fi
+      else
+        status="$status ${ct}_temp=?"
+      fi
+    done
 
     # GQ7 RTK fix-quality sampling. Only meaningful when ntrip container is up
     # and /rtcm is being delivered to the GQ7 aux port. Codes:

@@ -682,11 +682,14 @@ services:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
     environment:
       <<: *common-env
-    command: >
-      bash -c "source /opt/ros/jazzy/setup.bash &&
-               export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp &&
-               export CYCLONEDDS_URI=file:///config/cyclonedds.xml &&
-               ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765 address:=0.0.0.0 tls:=false"
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        export CYCLONEDDS_URI=file:///config/cyclonedds.xml
+        exec ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765 address:=0.0.0.0 tls:=true certfile:=/certs/cert.pem keyfile:=/certs/key.pem
     healthcheck:
       test: ["CMD", "pgrep", "-x", "foxglove_bridge"]
       interval: 30s
@@ -769,12 +772,17 @@ services:
         source /ros2_ws/install/setup.bash
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
-        echo "[dlio] Starting DLIO with Ouster OS1-128 + GQ7 IMU..."
+        echo "[dlio] Starting DLIO with Ouster OS1-128 + /ouster/imu (built-in BMI085)..."
+        # Use the Ouster-embedded BMI085 IMU rather than the GQ7:
+        #  - Monotonic timestamps (no driver-side rewinds that broke FAST-LIO2)
+        #  - Same host clock as /ouster/points in TIME_FROM_ROS_TIME mode
+        #  - Co-located with the lidar → identity lidar<->imu extrinsic is correct
+        # This mirrors the fix applied to fast-lio for the same divergence class.
         cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/dlio.yaml
         cp /ros2_ws/dlio_thor.yaml /ros2_ws/install/direct_lidar_inertial_odometry/share/direct_lidar_inertial_odometry/cfg/params.yaml
         ros2 launch direct_lidar_inertial_odometry dlio.launch.py \
           pointcloud_topic:=/ouster/points \
-          imu_topic:=/imu/data \
+          imu_topic:=/ouster/imu \
           rviz:=false &
         LAUNCH_PID=$$!
         sleep 20
@@ -829,6 +837,42 @@ services:
       - full
 
   # ===========================================================================
+  # SLAM MAP ACCUMULATOR — bounded unified world map for Foxglove
+  # Subscribes to /slam/cloud_registered (FAST-LIO2 per-scan in camera_init
+  # frame), voxel-hashes into a bounded grid, republishes /slam/map_voxel on
+  # a 2s timer with TRANSIENT_LOCAL durability so late subscribers latch on.
+  # This replaces FAST-LIO2's native publish.map_en, which accumulates
+  # unbounded and produces 100+ MB messages that choke CycloneDDS fragment
+  # reassembly (killing delivery of every other SLAM topic).
+  # ===========================================================================
+  slam-map-accumulator:
+    <<: *common
+    image: localhost/bess-ouster:jazzy
+    container_name: slam-map-accumulator
+    volumes:
+      - ./scripts/slam_map_accumulator.py:/ros2_ws/slam_map_accumulator.py:ro
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        exec python3 /ros2_ws/slam_map_accumulator.py \
+          --ros-args \
+          -p input_topic:=/slam/cloud_registered \
+          -p output_topic:=/slam/map_voxel \
+          -p frame_id:=camera_init \
+          -p voxel_size:=0.25 \
+          -p max_voxels:=2000000 \
+          -p publish_period_sec:=2.0
+    healthcheck:
+      <<: *healthcheck-ros2
+      test: ["CMD", "pgrep", "-f", "slam_map_accumulator"]
+    profiles:
+      - slam
+      - full
+
+  # ===========================================================================
   # RECORDING
   # ===========================================================================
   recorder:
@@ -837,7 +881,7 @@ services:
     container_name: recorder
     user: "1000:1000"
     volumes:
-      - /home/thor/bess/data/cache:/recordings:rw
+      - /mnt/bess-usb/bags:/recordings:rw
       - /home/thor/rosbag_qos.yaml:/rosbag_qos.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
@@ -878,6 +922,14 @@ services:
           /thermal/camera2/image_color \
           /thermal/camera3/image_color \
           /thermal/camera4/image_color \
+          /thermal/camera1/temperature \
+          /thermal/camera2/temperature \
+          /thermal/camera3/temperature \
+          /thermal/camera4/temperature \
+          /thermal/camera1/housing_temperature \
+          /thermal/camera2/housing_temperature \
+          /thermal/camera3/housing_temperature \
+          /thermal/camera4/housing_temperature \
           /lucid1/camera_driver/image_raw/compressed \
           /lucid1/camera_driver/camera_info \
           /lucid2/camera_driver/image_raw/compressed \

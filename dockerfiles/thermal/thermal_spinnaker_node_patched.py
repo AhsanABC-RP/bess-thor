@@ -16,7 +16,7 @@ Usage:
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import Image, CameraInfo
+from sensor_msgs.msg import Image, CameraInfo, Temperature
 from std_msgs.msg import Header
 import numpy as np
 import time
@@ -39,6 +39,7 @@ class ThermalSpinnakerNode(Node):
         self.declare_parameter('reconnect_interval', 5.0)
         self.declare_parameter('binning', 1)
         self.declare_parameter('pixel_format', 'Mono16')
+        self.declare_parameter('temperature_period_sec', 15.0)
 
         self.frame_id = self.get_parameter('frame_id').value
         self.target_fps = self.get_parameter('frame_rate').value
@@ -49,6 +50,7 @@ class ThermalSpinnakerNode(Node):
         self.reconnect_interval = self.get_parameter('reconnect_interval').value
         self.binning = self.get_parameter('binning').value
         self.pixel_format = self.get_parameter('pixel_format').value
+        self.temp_period = float(self.get_parameter('temperature_period_sec').value)
 
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -60,11 +62,25 @@ class ThermalSpinnakerNode(Node):
         if self.publish_info:
             self.info_pub = self.create_publisher(CameraInfo, 'camera_info', sensor_qos)
 
+        # Temperature publishers. FLIR AX5-ICD thermal cameras (A6701, A70)
+        # expose SensorTemperature (FPA) and HousingTemperature as read-only
+        # CFloat Celsius nodes. Read mid-acquisition from the same thread as
+        # GetNextImage so there's no PySpin nodemap race. Missing nodes are
+        # tolerated — camera families without the feature just won't publish.
+        self.fpa_temp_pub = self.create_publisher(Temperature, 'temperature', sensor_qos)
+        self.housing_temp_pub = self.create_publisher(Temperature, 'housing_temperature', sensor_qos)
+
         self.system = None
         self.cam = None
         self.running = True
         self.width = 640
         self.height = 513
+        self._last_temp_read = 0.0
+        self._temp_nodes_missing = set()
+        self._temp_discovery_done = False
+        self._temp_node_units = {}
+        self._temp_primary = None
+        self._temp_housing = None
 
         # Start main loop in a thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -363,6 +379,169 @@ class ThermalSpinnakerNode(Node):
         except Exception:
             pass
 
+    def _read_float_node(self, nodemap, name):
+        """Read a GenICam CFloat node by name. Returns float or None.
+        Caches missing nodes to avoid log spam across reads."""
+        if name in self._temp_nodes_missing:
+            return None
+        try:
+            node = PySpin.CFloatPtr(nodemap.GetNode(name))
+            if not PySpin.IsAvailable(node) or not PySpin.IsReadable(node):
+                self._temp_nodes_missing.add(name)
+                self.get_logger().info(f'{name}: not available on this camera (skipping)')
+                return None
+            return float(node.GetValue())
+        except PySpin.SpinnakerException:
+            self._temp_nodes_missing.add(name)
+            return None
+
+    def _publish_temp_msg(self, pub, celsius):
+        """Publish a sensor_msgs/Temperature reading with a fresh header stamp."""
+        msg = Temperature()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.frame_id
+        msg.temperature = celsius
+        msg.variance = 0.0
+        pub.publish(msg)
+
+    # Feature-name substrings that identify read-only sensor temperature
+    # readings (not scene config, not calibration constants).
+    TEMP_FEATURE_ALLOW = (
+        'DeviceTemperature',   # Blackfly/A70/A6701 — primary sensor temp
+        'SensorTemperature',   # Blackfly alternate
+        'FpaTemperature',      # some FLIR families expose this directly
+        'HousingTemperature',  # case/housing
+    )
+    # Substrings that identify config inputs or manufacturing constants — never
+    # publish these as a "camera temperature" measurement.
+    TEMP_FEATURE_DENY = (
+        'Reflected', 'Atmospheric', 'ExtOptics',
+        'Mfg', 'Calibration', 'Correction', 'Delta',
+        'Coeff', 'Query', 'MinTemp', 'MaxTemp', 'Flag',
+    )
+
+    def _kelvin_to_c(self, val, unit):
+        """Normalize a temperature reading to Celsius. FLIR uses Kelvin for the
+        atmospheric/scene inputs and Celsius for DeviceTemperature — we only
+        publish the latter, but normalize for safety."""
+        if unit and 'kelvin' in unit.lower():
+            return val - 273.15
+        return val
+
+    def _discover_temp_nodes(self, nodemap):
+        """Enumerate the GenICam tree and return readable CFloat nodes that
+        look like genuine sensor temperature measurements, filtered by
+        TEMP_FEATURE_ALLOW / TEMP_FEATURE_DENY. Run once after BeginAcquisition
+        to learn what the running firmware actually exposes."""
+        found = []
+        try:
+            root = PySpin.CCategoryPtr(nodemap.GetNode('Root'))
+            stack = [root]
+            seen = set()
+            while stack:
+                cat = stack.pop()
+                if not PySpin.IsAvailable(cat) or not PySpin.IsReadable(cat):
+                    continue
+                for feat in cat.GetFeatures():
+                    try:
+                        name = feat.GetName()
+                    except Exception:
+                        continue
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    try:
+                        iface_type = feat.GetPrincipalInterfaceType()
+                    except Exception:
+                        iface_type = None
+                    if iface_type == PySpin.intfICategory:
+                        stack.append(PySpin.CCategoryPtr(feat))
+                        continue
+                    if 'Temp' not in name:
+                        continue
+                    if any(bad in name for bad in self.TEMP_FEATURE_DENY):
+                        continue
+                    if not any(good in name for good in self.TEMP_FEATURE_ALLOW):
+                        continue
+                    if iface_type == PySpin.intfIFloat:
+                        fn = PySpin.CFloatPtr(feat)
+                        if PySpin.IsAvailable(fn) and PySpin.IsReadable(fn):
+                            try:
+                                val = float(fn.GetValue())
+                                unit = fn.GetUnit() if hasattr(fn, 'GetUnit') else ''
+                                found.append((name, val, unit))
+                            except Exception:
+                                pass
+        except Exception as e:
+            self.get_logger().warn(f'_discover_temp_nodes failed: {e}')
+        return found
+
+    def _read_and_publish_temps(self):
+        """Read temperature features from the camera and publish them. Must be
+        called from the acquisition thread so it serializes with GetNextImage —
+        PySpin nodemap reads are not thread-safe. On first call after connect,
+        enumerate the nodemap to learn which temperature feature names this
+        camera firmware actually exposes (varies across A6701/A70/Blackfly).
+
+        Note: A6701 is a cryocooled InSb MWIR camera — its DeviceTemperature
+        reports the Stirling-cooled FPA in °C and lives near -196°C (~77K).
+        A70 is an uncooled microbolometer — DeviceTemperature is body-ish
+        (~30-50°C). Same topic, very different healthy bands: the soak
+        monitor must threshold per camera family."""
+        if self.cam is None:
+            return
+        try:
+            nodemap = self.cam.GetNodeMap()
+        except PySpin.SpinnakerException as e:
+            self.get_logger().warn(f'temp read: GetNodeMap failed: {e}')
+            return
+
+        if not self._temp_discovery_done:
+            found = self._discover_temp_nodes(nodemap)
+            if found:
+                names = ', '.join(f'{n}={v:.1f}{u or "C"}' for n, v, u in found)
+                self.get_logger().info(f'Temperature nodes discovered: {names}')
+                self._temp_node_units = {n: u for n, _, u in found}
+                # Priority order: sensor/device first, then housing.
+                sensor_names = [n for n in self._temp_node_units
+                                if any(k in n for k in ('DeviceTemperature',
+                                                        'SensorTemperature',
+                                                        'FpaTemperature'))]
+                housing_names = [n for n in self._temp_node_units
+                                 if 'HousingTemperature' in n]
+                self._temp_primary = sensor_names[0] if sensor_names else None
+                self._temp_housing = housing_names[0] if housing_names else None
+            else:
+                self.get_logger().warn(
+                    'No usable temperature nodes on this camera — expected '
+                    'DeviceTemperature/SensorTemperature/HousingTemperature'
+                )
+                self._temp_node_units = {}
+                self._temp_primary = None
+                self._temp_housing = None
+            self._temp_discovery_done = True
+
+        fpa_c = None
+        hsg_c = None
+        if self._temp_primary:
+            raw = self._read_float_node(nodemap, self._temp_primary)
+            if raw is not None:
+                fpa_c = self._kelvin_to_c(raw, self._temp_node_units.get(self._temp_primary, ''))
+                self._publish_temp_msg(self.fpa_temp_pub, fpa_c)
+        if self._temp_housing:
+            raw = self._read_float_node(nodemap, self._temp_housing)
+            if raw is not None:
+                hsg_c = self._kelvin_to_c(raw, self._temp_node_units.get(self._temp_housing, ''))
+                self._publish_temp_msg(self.housing_temp_pub, hsg_c)
+
+        parts = []
+        if fpa_c is not None:
+            parts.append(f'FPA={fpa_c:.1f}C')
+        if hsg_c is not None:
+            parts.append(f'Housing={hsg_c:.1f}C')
+        if parts:
+            self.get_logger().info('Camera temps: ' + ' '.join(parts))
+
     def _release_camera(self):
         """Release current camera handle."""
         if self.cam is not None:
@@ -375,6 +554,11 @@ class ThermalSpinnakerNode(Node):
             except Exception:
                 pass
             self.cam = None
+        self._temp_discovery_done = False
+        self._temp_node_units = {}
+        self._temp_primary = None
+        self._temp_housing = None
+        self._temp_nodes_missing.clear()
 
     def _run_loop(self):
         """Main loop: connect, acquire, reconnect on failure."""
@@ -401,6 +585,10 @@ class ThermalSpinnakerNode(Node):
             consecutive_errors = 0
             frame_count = 0
             last_log = time.time()
+            # Prime the temp topic right away so subscribers don't wait
+            # temperature_period_sec for the first reading.
+            self._read_and_publish_temps()
+            self._last_temp_read = time.time()
 
             while self.running and rclpy.ok():
                 try:
@@ -425,6 +613,10 @@ class ThermalSpinnakerNode(Node):
                         self.get_logger().info(f'Publishing at {fps:.1f} Hz')
                         frame_count = 0
                         last_log = now
+
+                    if self.temp_period > 0 and (now - self._last_temp_read) >= self.temp_period:
+                        self._read_and_publish_temps()
+                        self._last_temp_read = now
 
                 except PySpin.SpinnakerException as e:
                     consecutive_errors += 1
