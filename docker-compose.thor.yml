@@ -356,6 +356,10 @@ services:
     container_name: lucid1
     volumes:
       - ./containers/lucid/lucid_node.py:/ros2_ws/lucid_node.py:ro
+      # Override baked entrypoint that clobbers host sysctls under privileged
+      # mode (drops rmem_max from 2GB to 128MB on every lucid restart).
+      # See containers/lucid/entrypoint.sh header for full root cause.
+      - ./containers/lucid/entrypoint.sh:/entrypoint.sh:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
       - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
@@ -394,6 +398,8 @@ services:
     container_name: lucid2
     volumes:
       - ./containers/lucid/lucid_node.py:/ros2_ws/lucid_node.py:ro
+      # See lucid1 above — same baked-entrypoint sysctl-clobber fix.
+      - ./containers/lucid/entrypoint.sh:/entrypoint.sh:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
       - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro

@@ -181,11 +181,16 @@ else
     hint "Check sfp28-9/11/13/15 breakout cabling; power-cycle MikroTik if needed"
 fi
 
-if ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; then
-    pass "Internet (1.1.1.1) reachable"
+# Use HTTPS HEAD, not ICMP, for the internet check. EE UK (the SIM in
+# the RUT50) drops outbound ICMP to 1.1.1.1 entirely, so a ping-based
+# probe gives a false negative even when the 5G data path is healthy.
+# google.com over HTTPS is the same path used by bess-time-bootstrap.
+if curl -fsS --max-time 5 -o /dev/null https://www.google.com 2>/dev/null; then
+    pass "Internet reachable (HTTPS HEAD https://www.google.com)"
 else
-    warn "Internet (1.1.1.1) unreachable — RUT50 5G uplink may be down"
+    warn "Internet unreachable via HTTPS — RUT50 5G uplink may be down"
     hint "Check /tool ping on MikroTik bridgeWAN; see boot-sensors.sh STEP 3.5"
+    hint "ICMP to 1.1.1.1 is blocked by carrier — do NOT use ping for this check"
 fi
 
 # ============================================================
