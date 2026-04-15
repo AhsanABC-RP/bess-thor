@@ -31,5 +31,15 @@
            Increase to handle burst losses without dropping entire messages. -->
       <DefragReliableMaxSamples>64</DefragReliableMaxSamples>
     </Internal>
+
+    <Discovery>
+      <!-- Use ephemeral ports instead of indexed participant ports.
+           Default MaxAutoParticipantIndex=9 caps us to 10 participants per host,
+           and the stack runs ~30 containers × several nodes each → pool exhaustion →
+           "Failed to find a free participant index for domain 0" (segformer, tf2_echo,
+           any one-off ros2 CLI tool). `none` routes participants through ephemeral
+           source ports and removes the cap entirely. -->
+      <ParticipantIndex>none</ParticipantIndex>
+    </Discovery>
   </Domain>
 </CycloneDDS>

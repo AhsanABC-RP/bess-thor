@@ -1,0 +1,26 @@
+[Unit]
+Description=BESS RM110 USB cold-boot recovery (tegra-xusb rebind)
+Documentation=file:///home/thor/bess/scripts/bess-usb-recovery.sh
+After=multi-user.target
+# 2026-04-15: raised burst 3 -> 24 because warm-reboot recovery often needs
+# an async user re-seat event. Safe: script is a no-op when device present.
+StartLimitIntervalSec=86400
+StartLimitBurst=24
+
+[Service]
+Type=oneshot
+ExecStart=/home/thor/bess/scripts/bess-usb-recovery.sh
+StandardOutput=journal
+StandardError=journal
+RemainAfterExit=no
+# Retry every 5 min until RM110 is present — so if the user physically
+# re-seats the cable, the service catches it and the mount comes up on
+# its own without needing a manual rerun. NOTE: rebinding tegra-xusb
+# alone cannot recover a warm-reboot PHY-stuck RM110; physical re-seat
+# is still required. This retry just removes the "service gave up"
+# wall so the automount completes on its own once the hardware is back.
+Restart=on-failure
+RestartSec=300
+
+[Install]
+WantedBy=multi-user.target

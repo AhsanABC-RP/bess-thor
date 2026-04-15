@@ -1,24 +1,21 @@
 [Unit]
-Description=BESS Thor cold-boot HTTP time bootstrap (kill-switch gated)
-Documentation=file:///home/thor/CLAUDE.md file:///etc/bess/README
+Description=BESS Thor cold-boot HTTP time bootstrap
+Documentation=file:///home/thor/CLAUDE.md
 After=network-online.target
 Wants=network-online.target
-# Intentionally NO Before= on ptp4l/phc2sys. A cold-boot wall-clock drift
-# anchoring phc2sys-mgbe0 on a bad PHC is a recoverable failure (phc2sys -S 0
-# will not step, slaves lag but don't crash). A chain from this unit into
-# PTP was part of the 2026-04-14 boot-loop and is NOT worth re-introducing.
-# If the time bootstrap is critical for your current session, run it by hand
-# via `sudo /usr/local/sbin/bess-time-bootstrap` BEFORE you start PTP.
+# Intentionally NO Before= on ptp4l/phc2sys. phc2sys -S 0 will not step PHC1
+# even if this unit sets a weird wall clock — worst case slaves lag, they
+# don't crash. Keep this unit independent of the PTP chain so a time-fetch
+# wedge cannot cascade into sensor net downtime.
 StartLimitIntervalSec=86400
 StartLimitBurst=3
 ConditionPathExists=/usr/local/sbin/bess-time-bootstrap
-ConditionPathExists=!/etc/bess/no-auto-time
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=240
-ExecStart=/bin/sh -c 'if [ -f /etc/bess/no-auto-time ]; then echo "bess-time-bootstrap: kill-switch /etc/bess/no-auto-time present, skipping" >&2; exit 0; fi; exec /usr/local/sbin/bess-time-bootstrap'
+ExecStart=/usr/local/sbin/bess-time-bootstrap
 SuccessExitStatus=0 1
 StandardOutput=journal
 StandardError=journal

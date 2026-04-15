@@ -148,6 +148,7 @@ services:
       - imu
       - sensors
       - dev
+      - full
 
   # ===========================================================================
   # NTRIP RTK Corrections Client (SmartNET UK → /rtcm → microstrain aux)
@@ -1150,10 +1151,13 @@ services:
       test: ["CMD", "pgrep", "-f", "segformer_node"]
     depends_on:
       - pii-mask
+    # Removed from `full` and `inference` profiles 2026-04-15 while iGPU
+    # stability is in question — segformer force-recreate correlates with a
+    # hard reboot at system-clock 11:48 (= ~18:12 UK) on boot -1. Opt-in only
+    # via `--profile segformer` until the hang is root-caused. Do NOT add
+    # back to `full` without a stability test under combined load.
     profiles:
       - segformer
-      - inference
-      - full
 
   # ===========================================================================
   # EXTRACTION PIPELINE

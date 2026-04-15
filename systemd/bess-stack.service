@@ -1,25 +1,16 @@
 [Unit]
-Description=BESS Thor docker compose sensor stack (kill-switch gated)
-Documentation=file:///home/thor/CLAUDE.md file:///etc/bess/README
-# Deliberately NO chaining to bess-network / bess-time-bootstrap — after the
-# 2026-04-14 boot-loop incident (see CLAUDE.md changelog) those units were
-# re-wired so each is independently gated. Chaining them cascades failures
-# long enough for the Tegra watchdog on /dev/watchdog0 to fire.
-After=docker.service network-online.target
-Wants=docker.service network-online.target
-# Only re-try 3 times within a day. After 3 failures systemd gives up and
-# the unit stays in `failed` — boot loops are structurally impossible.
+Description=BESS Thor docker compose sensor stack (sequenced launcher)
+Documentation=file:///home/thor/CLAUDE.md
+# After docker is up and the sensor network is bootstrapped. Wants= (not
+# Requires=) so a bess-network failure doesn't block the stack — the launcher
+# script uses `up -d --no-deps` and most containers don't need 169.254.100.1
+# live to start (the camera SDKs retry discovery internally).
+After=docker.service bess-network.service network-online.target
+Wants=docker.service bess-network.service network-online.target
+# Rate limit: 3 failures in 24h → unit stays failed. Structural safety net
+# against Tegra watchdog boot loops.
 StartLimitIntervalSec=86400
 StartLimitBurst=3
-# Kill-switch: unit is a NO-OP while this file exists. ARMED BY DEFAULT.
-# To enable auto-start:
-#   sudo rm /etc/bess/no-auto-stack
-#   sudo systemctl enable bess-stack.service
-#   sudo systemctl start bess-stack.service    # test without reboot first
-# To disarm again:
-#   sudo touch /etc/bess/no-auto-stack
-#   sudo systemctl stop bess-stack.service
-ConditionPathExists=!/etc/bess/no-auto-stack
 
 [Service]
 Type=oneshot
@@ -27,15 +18,17 @@ RemainAfterExit=yes
 WorkingDirectory=/home/thor/bess
 User=thor
 Group=thor
-# Short enough that a wedged ExecStart can't eat the full boot window.
-TimeoutStartSec=180
-TimeoutStopSec=120
-# 30-second grace BEFORE touching docker. Gives SSH + Tailscale enough time
-# to come up so a human can `touch /etc/bess/no-auto-stack && reboot` inside
-# the grace window if something is obviously wrong. The kill-switch is
-# re-checked inside ExecStart AFTER the sleep so the grace period is real.
+# The launcher is ~125s of deliberate sleeps + docker compose calls. Allow
+# 10 min so a slow image pull or lingering container cleanup doesn't trip
+# the timeout on a cold boot.
+TimeoutStartSec=600
+TimeoutStopSec=180
+# 30-second grace before touching docker. Gives SSH + Tailscale enough time
+# to come up so a human can intervene from a remote shell if something is
+# obviously wrong before the stack starts (touch /tmp/abort-bess-stack and
+# reboot inside this window to safely interrupt the boot path).
 ExecStartPre=/bin/sleep 30
-ExecStart=/bin/sh -c 'if [ -f /etc/bess/no-auto-stack ]; then echo "bess-stack: kill-switch /etc/bess/no-auto-stack present after grace, skipping" >&2; exit 0; fi; exec /usr/bin/docker compose -f /home/thor/bess/docker-compose.thor.yml --profile full up -d'
+ExecStart=/home/thor/bess/scripts/bess-stack-up.sh
 ExecStop=/usr/bin/docker compose -f /home/thor/bess/docker-compose.thor.yml --profile full down
 StandardOutput=journal
 StandardError=journal

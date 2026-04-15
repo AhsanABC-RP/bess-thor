@@ -1,96 +1,86 @@
-# /etc/bess/ — BESS Thor boot-time safety kill-switches
+# BESS Thor systemd units — sequenced-launcher doctrine (2026-04-15)
 
-After the 2026-04-14 boot-loop incident (see `/home/thor/CLAUDE.md`
-changelog) three systemd units that used to auto-start the sensor stack at
-boot were rewired to be individually gated behind a kill-switch file. The
-files in `/etc/bess/` control whether each service runs on next boot.
+As of 2026-04-15 (post second boot-loop recovery pass), the three BESS Thor
+boot-time units are plain oneshots — **no kill-switch files**, **no
+`ConditionPathExists=!` gates**. The structural fix for the 2026-04-14/15
+boot-loop incident was to replace `docker compose --profile full up -d`
+(which race-started ~30 containers in parallel) with
+`/home/thor/bess/scripts/bess-stack-up.sh`, a sequenced launcher that brings
+containers up in 10 batches of ≤4 at a time. No more parallel stampede →
+no more Tegra watchdog wedge → no more boot loop.
 
-- **ARMED** (file present) = service is a NO-OP at boot. System comes up
-  clean, no containers start, no network bootstrap runs, no wall clock step.
-- **DISARMED** (file absent) = service runs on next boot.
+The old kill-switch machinery (`no-auto-stack` / `no-auto-network` /
+`no-auto-time` files under `/etc/bess/`) is gone. If you grep for
+`ConditionPathExists=!/etc/bess/` you should find nothing.
 
-**Default state: ALL THREE ARMED.** You must explicitly disarm each one.
+## The units
 
-## Files
+| Unit | Function | Ordering |
+|------|----------|----------|
+| `bess-network.service` | Runs `scripts/boot-sensors.sh`: 169.254.100.1/16 on `mgbe0_0`, kernel sysctls, dnsmasq with camera MAC reservations, MikroTik probe, default route via RUT50 bridgeWAN | `After=network-online.target NetworkManager.service` |
+| `bess-time-bootstrap.service` | Cold-boot HTTP-Date quorum fetch to seed `CLOCK_REALTIME` when BMC RTC is stale. **Independent of PTP chain** — `phc2sys -S 0` will not step PHC1 even if this unit sets a weird wall clock, so a failure here cannot cascade into sensor downtime | `After=network-online.target` |
+| `bess-stack.service` | Runs `scripts/bess-stack-up.sh`. `ExecStartPre=/bin/sleep 30` grace before touching docker so SSH/Tailscale come up in time for a human to intervene remotely | `After=docker.service bess-network.service network-online.target` |
+| `bess-usb-recovery.service` | RM110 cold-boot non-enum auto-recovery. Rebinds `tegra-xusb` platform device if `1103:0110` or `/dev/disk/by-id/*RM110*` is missing at T+45 s. `Restart=on-failure RestartSec=300` so a later physical re-seat is picked up on the next 5 min tick | `After=multi-user.target` |
 
-### `/etc/bess/no-auto-stack`
-Gates `bess-stack.service` (`docker compose --profile full up -d`).
-When armed: docker compose does not auto-start. You still get `ptp4l`,
-`phc2sys`, and `docker.service`. Run the stack by hand once you have
-verified the box is healthy:
-```bash
-cd /home/thor/bess
-docker compose -f docker-compose.thor.yml --profile full up -d
-```
+## Safety nets that remain
 
-### `/etc/bess/no-auto-network`
-Gates `bess-network.service` (`scripts/boot-sensors.sh`).
-When armed: the sensor-net bootstrap (IP/MTU/sysctls/dnsmasq, MikroTik probe,
-link-bounce on `mgbe0_0`) does not run at boot. Interfaces come up via
-NetworkManager only. Run the script by hand after boot with:
-```bash
-sudo /home/thor/bess/scripts/boot-sensors.sh
-```
+1. **Sequenced launcher** (primary defense): max 4 containers starting at any
+   instant, camera SDKs never co-init, GPU-touching containers staggered
+   ≥5 s. Total ~125 s for a cold-boot startup.
 
-### `/etc/bess/no-auto-time`
-Gates `bess-time-bootstrap.service` (`/usr/local/sbin/bess-time-bootstrap`).
-When armed: no boot-time HTTP-Date wall clock step. Wall clock is whatever
-the BMC RTC holds, `ptp4l`/`phc2sys` anchor on that. Run the script by hand
-BEFORE starting PTP if you know the RTC is stale:
-```bash
-sudo /usr/local/sbin/bess-time-bootstrap --check    # dry run first
-sudo /usr/local/sbin/bess-time-bootstrap
-```
+2. **Rate limit** (secondary defense): each unit has
+   `StartLimitIntervalSec=86400` + `StartLimitBurst=3`. After 3 failures in
+   24 h the unit stays in `failed` and systemd gives up. Even if the
+   sequenced launcher itself develops a fatal regression, systemd will not
+   put the box into a boot loop.
+
+3. **30-second grace in `bess-stack.service`**: `ExecStartPre=/bin/sleep 30`.
+   If you boot into a broken stack via SSH during this window, you can
+   `systemctl stop bess-stack.service` + `systemctl disable bess-stack`
+   before any container touches GPU/PTP/USB.
 
 ## Enabling auto-start (safe procedure)
 
-Do ONE service at a time. Reboot and verify between each one.
+Do ONE service at a time. Test without rebooting first, then reboot to
+confirm the boot path works.
 
 ```bash
-# 1. Disarm one kill-switch
-sudo rm /etc/bess/no-auto-stack
+# Test network bootstrap by hand first
+sudo systemctl start bess-network.service
+journalctl -u bess-network.service -b
 
-# 2. Enable the unit (writes the WantedBy= symlink)
-sudo systemctl enable bess-stack.service
-
-# 3. Test without rebooting first
+# Test the sequenced launcher by hand (docker must be up; live stack is OK, idempotent)
 sudo systemctl start bess-stack.service
-systemctl status bess-stack.service
-docker ps
+docker ps --format 'table {{.Names}}\t{{.Status}}'
+journalctl -u bess-stack.service -b
 
-# 4. If healthy, reboot to confirm the boot path works
+# Only after both above pass: enable on boot
+sudo systemctl enable bess-network.service bess-stack.service
+# time-bootstrap is optional — only enable if BMC RTC is unreliable
+# sudo systemctl enable bess-time-bootstrap.service
+
+# Then reboot to confirm the boot path works end-to-end
 sudo reboot
-
-# 5. After the reboot, verify
-systemctl status bess-stack.service
-docker ps
 ```
 
-## Emergency re-disarm (from a live session)
+## If the box boots into a broken stack
+
+SSH in during the 30 s grace window (before containers start):
 
 ```bash
-sudo touch /etc/bess/no-auto-stack
 sudo systemctl stop bess-stack.service
 sudo systemctl disable bess-stack.service
 ```
 
-The touch-file is the structural guarantee: even if the service is still
-`enabled`, the next boot is a no-op because systemd evaluates
-`ConditionPathExists=` before Execing anything inside the service.
+If you missed the window and the stack is running but wedged:
 
-## Why not `ExecCondition=`?
+```bash
+cd /home/thor/bess
+docker compose -f docker-compose.thor.yml --profile full down
+sudo systemctl disable bess-stack.service
+```
 
-systemd `ExecCondition=` runs INSIDE the service transaction and can itself
-wedge. `ConditionPathExists=!` is evaluated by pid 1 OUTSIDE the service and
-cannot fail open. That matters during a boot loop — you want the exit path
-to be as close to "systemd skips the unit" as possible.
-
-## Rate limits
-
-Each unit has `StartLimitIntervalSec=86400` + `StartLimitBurst=3`, meaning
-after 3 failures in 24 hours systemd gives up and the unit stays in
-`failed` state. Combined with the touch-file kill-switches, this makes
-Tegra-watchdog boot loops structurally impossible.
+Then diagnose in peace.
 
 ## Install paths
 
@@ -102,13 +92,16 @@ under `systemd/`:
 | `systemd/bess-stack.service` | `/etc/systemd/system/bess-stack.service` |
 | `systemd/bess-network.service` | `/etc/systemd/system/bess-network.service` |
 | `systemd/bess-time-bootstrap.service` | `/etc/systemd/system/bess-time-bootstrap.service` |
+| `systemd/bess-usb-recovery.service` | `/etc/systemd/system/bess-usb-recovery.service` |
 | `systemd/etc-bess-README.md` | `/etc/bess/README` |
 
 To redeploy after a repo update:
+
 ```bash
 sudo cp systemd/bess-stack.service /etc/systemd/system/
 sudo cp systemd/bess-network.service /etc/systemd/system/
 sudo cp systemd/bess-time-bootstrap.service /etc/systemd/system/
+sudo cp systemd/bess-usb-recovery.service /etc/systemd/system/
 sudo cp systemd/etc-bess-README.md /etc/bess/README
 sudo systemctl daemon-reload
 ```
