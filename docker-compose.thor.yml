@@ -473,13 +473,12 @@ services:
             -p pixel_format:=BayerRG8 \
             -p frame_rate:=5.0 \
             -p frame_rate_enable:=true \
-            -p frame_rate_auto:=Off \
             -p exposure_auto:=Continuous \
             -p gain_auto:=Continuous \
             -p device_link_throughput_limit:=125000000 \
             -p gev_scps_packet_size:=1400 \
             -p buffer_queue_size:=10 \
-            -p trigger_mode:=Off \
+            -p trigger_mode:='"Off"' \
             -p use_ieee_1588:=true \
             -p max_ieee_1588_offset:=0.001 \
             -p adjust_timestamp:=false \
@@ -534,12 +533,12 @@ services:
             -p pixel_format:=BayerRG8 \
             -p frame_rate:=5.0 \
             -p frame_rate_enable:=true \
-            -p frame_rate_auto:=Off \
             -p exposure_auto:=Continuous \
             -p gain_auto:=Continuous \
+            -p device_link_throughput_limit:=125000000 \
             -p gev_scps_packet_size:=1400 \
             -p buffer_queue_size:=10 \
-            -p trigger_mode:=Off \
+            -p trigger_mode:='"Off"' \
             -p use_ieee_1588:=true \
             -p max_ieee_1588_offset:=0.001 \
             -p adjust_timestamp:=false \
@@ -555,8 +554,8 @@ services:
             -p chunk_enable_timestamp:=true \
             -p gev_ieee_1588:=true \
             -p gev_ieee_1588_mode:=SlaveOnly || true
-          echo "[blackfly2] Exited, restarting in 10s..."
-          sleep 10
+          echo "[blackfly2] Exited, waiting 30s for GigE heartbeat to clear..."
+          sleep 30
         done
     healthcheck:
       <<: *healthcheck-ros2
@@ -958,10 +957,11 @@ services:
     container_name: recorder
     user: "1000:1000"
     volumes:
-      # TEMP: /mnt/bess-usb offline (car mounting) — writing to Thor NVMe with
-      # rotating 5-min bag segments + 48 GB total cap. Switch back to
-      # /mnt/bess-usb/bags once the HighPoint RM110 is reconnected.
-      - /home/thor/recordings/tmp:/recordings:rw
+      # /mnt/bess-usb is the HighPoint RM110 ext4 (7.3T). Never point this at
+      # /home/thor/recordings/* on the NVMe — the 2026-04-14 ENOSPC incident
+      # wedged Claude Code via stdout tmpfile ENOSPC. Re-verify mount + free
+      # space (bess-cold-start-check.sh checks both) before enabling.
+      - /mnt/bess-usb/bags:/recordings:rw
       - /home/thor/rosbag_qos.yaml:/rosbag_qos.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
@@ -1115,12 +1115,12 @@ services:
           /rutx/mobile/operator \
           /diagnostics
     profiles:
-      # DISABLED 2026-04-14 after NVMe ENOSPC incident wedged Claude Code Bash.
-      # To re-enable: change `record-disabled` back to `record` and run
-      # `docker compose -f docker-compose.thor.yml --profile record up -d recorder`.
-      # Verify /mnt/bess-usb is mounted OR that the 100 GB CAP_BYTES is adequate
-      # for host NVMe free space before starting.
-      - record-disabled
+      # Re-enabled 2026-04-15 after /mnt/bess-usb (RM110 ext4, 5.8T free) came
+      # back online and both thermal4 + foxglove schema fixes landed. Starts
+      # only via explicit `--profile record` — NOT in `full`, so normal stack
+      # startup never auto-starts it. The 2026-04-14 NVMe ENOSPC trap is
+      # closed by the /mnt/bess-usb/bags volume above.
+      - record
     restart: "no"
 
   # ===========================================================================
