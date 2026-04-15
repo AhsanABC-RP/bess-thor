@@ -22,14 +22,16 @@ LOG "=== STEP 1: Thor Host Network ==="
 IFACE="mgbe0_0"
 
 # IPs
+# mgbe0_0 is the GigE sensor NIC and MUST hold only 169.254.100.1/16.
+# Any additional IP (192.168.2.50, 192.168.127.1, 192.168.1.50, ...) causes
+# the Spinnaker SDK to associate cameras with the wrong transport NIC and
+# emit "Camera is on a wrong subnet [-1015]" on Init() — A6701 thermals and
+# any other self-assigned-link-local camera fail to start. See 2026-04-15
+# thermal diagnosis. Keep this interface single-IP.
 ip addr show $IFACE | grep -q "169.254.100.1" || ip addr add 169.254.100.1/16 dev $IFACE
-ip addr show $IFACE | grep -q "192.168.2.50"  || ip addr add 192.168.2.50/24 dev $IFACE
-ip addr show $IFACE | grep -q "192.168.127.1" || ip addr add 192.168.127.1/24 dev $IFACE
-# 192.168.1.50/24 was removed 2026-04-13: RUT50 is on MikroTik sfp28-12 in
-# bridgeWAN (not bridgeLocal), so Thor has no direct L2 path to 192.168.1.0/24.
-# Thor reaches RUT50 by routing through MikroTik (169.254.100.254) which
-# masquerade-NATs out bridgeWAN. See STEP 3.5 below.
-ip addr del 192.168.1.50/24 dev $IFACE 2>/dev/null
+ip addr del 192.168.2.50/24  dev $IFACE 2>/dev/null
+ip addr del 192.168.127.1/24 dev $IFACE 2>/dev/null
+ip addr del 192.168.1.50/24  dev $IFACE 2>/dev/null
 
 # MTU (needs link bounce)
 CUR_MTU=$(ip link show $IFACE | grep -oP 'mtu \K[0-9]+')
