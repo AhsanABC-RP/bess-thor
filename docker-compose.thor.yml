@@ -29,7 +29,17 @@ x-common: &common
     NVIDIA_VISIBLE_DEVICES: all
     NVIDIA_DRIVER_CAPABILITIES: all
     CUDA_VISIBLE_DEVICES: "0"
-  restart: unless-stopped
+  # Do NOT set restart: unless-stopped here. On boot, docker.service
+  # restarts every unless-stopped container simultaneously, and the
+  # race (27+ containers competing for GPU/CUDA init, USB probes,
+  # GigE SDK discovery, PTP clients, host network) wedges the kernel
+  # long enough for the Tegra hw watchdog (/dev/watchdog0) to fire.
+  # That caused the 2026-04-15 rapid-reboot loop (not the systemd
+  # chain as previously attributed). Start the stack explicitly with
+  # `docker compose -f docker-compose.thor.yml --profile full up -d`
+  # after boot — session-level retry loops inside each container
+  # already handle crash recovery.
+  restart: "no"
 
 x-healthcheck-ros2: &healthcheck-ros2
   interval: 30s
@@ -771,7 +781,7 @@ services:
       - glim-deprecated
       - slam
       - full
-    restart: unless-stopped
+    restart: "no"
 
   kiss-icp:
     <<: *common
