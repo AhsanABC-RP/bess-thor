@@ -47,9 +47,15 @@ fi
 sysctl -w net.ipv6.conf.$IFACE.disable_ipv6=0 >/dev/null 2>&1
 ip -6 addr show dev $IFACE | grep -q "fe80::100" || ip -6 addr add fe80::100/64 dev $IFACE 2>/dev/null
 
-# Kernel tuning
+# Kernel tuning. Keep these in sync with /etc/sysctl.d/60-gige-sensors.conf —
+# the .conf file is authoritative at boot, these sysctl -w calls are a belt-
+# and-braces runtime re-apply in case the service runs before the .conf was
+# loaded, or in case a container sysctl'd something back.
+# rmem_default is 64 MB, not INT_MAX: every socket pre-allocates this much,
+# so giving it to every unrelated socket on the box is wasteful. Sensor
+# containers SO_RCVBUF up to rmem_max where needed.
 sysctl -w net.core.rmem_max=2147483647 >/dev/null
-sysctl -w net.core.rmem_default=2147483647 >/dev/null
+sysctl -w net.core.rmem_default=67108864 >/dev/null
 sysctl -w net.core.wmem_max=67108864 >/dev/null
 sysctl -w net.core.wmem_default=67108864 >/dev/null
 sysctl -w net.core.netdev_max_backlog=100000 >/dev/null

@@ -640,7 +640,13 @@ services:
       - ./containers/cameras/nvjpeg_encoder.py:/ros2_ws/nvjpeg_encoder.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/blackfly/camera1/blackfly_camera/image_raw -p output_topic:=/blackfly/camera1/blackfly_camera/image_raw/compressed"]
+    # Output is /image_raw/compressed_gpu, NOT /image_raw/compressed. The
+    # spinnaker_camera_driver C++ node uses image_transport::CameraPublisher
+    # which auto-creates /image_raw/compressed via the CPU plugin. Publishing
+    # to the same topic here produced two publishers → CycloneDDS serdata.cpp
+    # errors ("invalid data size", "string data is not null-terminated") and
+    # doubled the topic rate. See Issue #17.
+    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/blackfly/camera1/blackfly_camera/image_raw -p output_topic:=/blackfly/camera1/blackfly_camera/image_raw/compressed_gpu"]
     profiles: [blackfly, rgb, sensors, dev, full]
 
   compress-blackfly2:
@@ -654,7 +660,9 @@ services:
       - ./containers/cameras/nvjpeg_encoder.py:/ros2_ws/nvjpeg_encoder.py:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
-    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/blackfly/camera2/blackfly_camera/image_raw -p output_topic:=/blackfly/camera2/blackfly_camera/image_raw/compressed"]
+    # See compress-blackfly1 note — output is /image_raw/compressed_gpu to
+    # avoid collision with the driver's image_transport CPU plugin.
+    command: ["bash", "-c", "source /opt/ros/humble/setup.bash && python3 /ros2_ws/gpu_compress_cuda.py --ros-args -p input_topic:=/blackfly/camera2/blackfly_camera/image_raw -p output_topic:=/blackfly/camera2/blackfly_camera/image_raw/compressed_gpu"]
     profiles: [blackfly, rgb, sensors, dev, full]
 
   # ===========================================================================
