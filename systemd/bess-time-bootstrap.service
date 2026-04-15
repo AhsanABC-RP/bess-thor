@@ -1,22 +1,28 @@
 [Unit]
-Description=BESS Thor cold-boot HTTP time bootstrap (pre-TLS)
-Documentation=file:///home/thor/CLAUDE.md
-# Must run AFTER basic networking is up but BEFORE anything TLS-dependent
-# and BEFORE the PTP services anchor the PHC to a stale REALTIME.
+Description=BESS Thor cold-boot HTTP time bootstrap (kill-switch gated)
+Documentation=file:///home/thor/CLAUDE.md file:///etc/bess/README
 After=network-online.target
 Wants=network-online.target
-Before=ptp4l-mgbe0.service phc2sys-mgbe0.service docker.service
+# Intentionally NO Before= on ptp4l/phc2sys. A cold-boot wall-clock drift
+# anchoring phc2sys-mgbe0 on a bad PHC is a recoverable failure (phc2sys -S 0
+# will not step, slaves lag but don't crash). A chain from this unit into
+# PTP was part of the 2026-04-14 boot-loop and is NOT worth re-introducing.
+# If the time bootstrap is critical for your current session, run it by hand
+# via `sudo /usr/local/sbin/bess-time-bootstrap` BEFORE you start PTP.
+StartLimitIntervalSec=86400
+StartLimitBurst=3
 ConditionPathExists=/usr/local/sbin/bess-time-bootstrap
+ConditionPathExists=!/etc/bess/no-auto-time
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/bess-time-bootstrap
-# Failure is non-fatal — downstream services will retry on their own and
-# tailscaled / apt / the Claude CLI will recover once the clock is fixed
-# by any other means.
+TimeoutStartSec=240
+ExecStart=/bin/sh -c 'if [ -f /etc/bess/no-auto-time ]; then echo "bess-time-bootstrap: kill-switch /etc/bess/no-auto-time present, skipping" >&2; exit 0; fi; exec /usr/local/sbin/bess-time-bootstrap'
 SuccessExitStatus=0 1
-TimeoutStartSec=240s
+StandardOutput=journal
+StandardError=journal
+Restart=no
 
 [Install]
 WantedBy=multi-user.target

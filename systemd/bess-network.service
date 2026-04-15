@@ -1,0 +1,29 @@
+[Unit]
+Description=BESS Thor sensor network bootstrap (kill-switch gated)
+Documentation=file:///home/thor/CLAUDE.md file:///etc/bess/README
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=86400
+StartLimitBurst=3
+# Kill-switch: ARMED BY DEFAULT.
+# This unit runs scripts/boot-sensors.sh which does link-down/up on mgbe0_0
+# (MTU bounce), flushes enP2p1s0, takes mgbe1/2/3_0 down, mass-sysctl, and
+# SSHs to the MikroTik — any of which can wedge a Tegra kernel in the r8126
+# PHC reset path. Keep it gated until you are ready to test-reboot.
+ConditionPathExists=!/etc/bess/no-auto-network
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# boot-sensors.sh can take up to ~2 min (60s camera discovery sleep + MikroTik
+# probe). Anything beyond 240s and the script is genuinely wedged.
+TimeoutStartSec=240
+ExecStart=/bin/sh -c 'if [ -f /etc/bess/no-auto-network ]; then echo "bess-network: kill-switch /etc/bess/no-auto-network present, skipping" >&2; exit 0; fi; exec /home/thor/bess/scripts/boot-sensors.sh'
+# Non-fatal: script can partially fail without failing the service.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

@@ -933,24 +933,55 @@ services:
     container_name: recorder
     user: "1000:1000"
     volumes:
-      - /mnt/bess-usb/bags:/recordings:rw
+      # TEMP: /mnt/bess-usb offline (car mounting) — writing to Thor NVMe with
+      # rotating 5-min bag segments + 48 GB total cap. Switch back to
+      # /mnt/bess-usb/bags once the HighPoint RM110 is reconnected.
+      - /home/thor/recordings/tmp:/recordings:rw
       - /home/thor/rosbag_qos.yaml:/rosbag_qos.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
     working_dir: /recordings
+    environment:
+      # 100 GB soft cap on rolling bag dir. Pruner (below) trims oldest splits
+      # every 10s while total > CAP_BYTES. Raised from 40 GB after 2026-04-14
+      # NVMe ENOSPC incident wedged Claude Code Bash tool.
+      CAP_BYTES: "100000000000"
     command:
       - bash
       - -c
       - |
         source /opt/ros/jazzy/setup.bash
         source /ros2_ws/install/setup.bash
-        TIMESTAMP=$$(date +%Y%m%d_%H%M%S)_$$$$
+        mkdir -p /recordings/rolling
+        echo "[recorder] ring-buffer mode cap=$${CAP_BYTES}B dir=/recordings/rolling"
+        # Background pruner: every 10s, delete oldest .mcap splits while over cap.
+        # Never deletes the newest split (the one currently being written).
+        (
+          while true; do
+            sleep 10
+            dir=/recordings/rolling
+            total=$$(du -sb "$$dir" 2>/dev/null | awk '{print $$1}')
+            [ -z "$$total" ] && continue
+            while [ "$$total" -gt "$$CAP_BYTES" ]; do
+              count=$$(ls -1 "$$dir"/*.mcap 2>/dev/null | wc -l)
+              [ "$$count" -le 1 ] && break
+              victim=$$(ls -1rt "$$dir"/*.mcap 2>/dev/null | head -1)
+              [ -z "$$victim" ] && break
+              echo "[cleanup] pruning $$victim (total=$$total cap=$$CAP_BYTES)"
+              rm -f "$$victim"
+              total=$$(du -sb "$$dir" 2>/dev/null | awk '{print $$1}')
+            done
+          done
+        ) &
+        # Start fresh bag directory each container start (old one gets wiped so metadata is consistent)
+        rm -rf /recordings/rolling
+        mkdir -p /recordings/rolling
         exec ros2 bag record \
-          --output /recordings/soak_$${TIMESTAMP} \
+          --output /recordings/rolling/bag \
           --storage mcap \
           --qos-profile-overrides-path /rosbag_qos.yaml \
           --max-cache-size 500000000 \
-          --max-bag-size 50000000000 \
+          --max-bag-size 5000000000 \
           /ouster/points \
           /ouster/points2 \
           /ouster/imu \
@@ -1059,7 +1090,12 @@ services:
           /rutx/mobile/operator \
           /diagnostics
     profiles:
-      - record
+      # DISABLED 2026-04-14 after NVMe ENOSPC incident wedged Claude Code Bash.
+      # To re-enable: change `record-disabled` back to `record` and run
+      # `docker compose -f docker-compose.thor.yml --profile record up -d recorder`.
+      # Verify /mnt/bess-usb is mounted OR that the 100 GB CAP_BYTES is adequate
+      # for host NVMe free space before starting.
+      - record-disabled
     restart: "no"
 
   # ===========================================================================

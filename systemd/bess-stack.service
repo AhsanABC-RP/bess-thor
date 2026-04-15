@@ -1,0 +1,45 @@
+[Unit]
+Description=BESS Thor docker compose sensor stack (kill-switch gated)
+Documentation=file:///home/thor/CLAUDE.md file:///etc/bess/README
+# Deliberately NO chaining to bess-network / bess-time-bootstrap — after the
+# 2026-04-14 boot-loop incident (see CLAUDE.md changelog) those units were
+# re-wired so each is independently gated. Chaining them cascades failures
+# long enough for the Tegra watchdog on /dev/watchdog0 to fire.
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+# Only re-try 3 times within a day. After 3 failures systemd gives up and
+# the unit stays in `failed` — boot loops are structurally impossible.
+StartLimitIntervalSec=86400
+StartLimitBurst=3
+# Kill-switch: unit is a NO-OP while this file exists. ARMED BY DEFAULT.
+# To enable auto-start:
+#   sudo rm /etc/bess/no-auto-stack
+#   sudo systemctl enable bess-stack.service
+#   sudo systemctl start bess-stack.service    # test without reboot first
+# To disarm again:
+#   sudo touch /etc/bess/no-auto-stack
+#   sudo systemctl stop bess-stack.service
+ConditionPathExists=!/etc/bess/no-auto-stack
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/thor/bess
+User=thor
+Group=thor
+# Short enough that a wedged ExecStart can't eat the full boot window.
+TimeoutStartSec=180
+TimeoutStopSec=120
+# 30-second grace BEFORE touching docker. Gives SSH + Tailscale enough time
+# to come up so a human can `touch /etc/bess/no-auto-stack && reboot` inside
+# the grace window if something is obviously wrong. The kill-switch is
+# re-checked inside ExecStart AFTER the sleep so the grace period is real.
+ExecStartPre=/bin/sleep 30
+ExecStart=/bin/sh -c 'if [ -f /etc/bess/no-auto-stack ]; then echo "bess-stack: kill-switch /etc/bess/no-auto-stack present after grace, skipping" >&2; exit 0; fi; exec /usr/bin/docker compose -f /home/thor/bess/docker-compose.thor.yml --profile full up -d'
+ExecStop=/usr/bin/docker compose -f /home/thor/bess/docker-compose.thor.yml --profile full down
+StandardOutput=journal
+StandardError=journal
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

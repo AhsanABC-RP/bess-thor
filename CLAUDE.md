@@ -37,28 +37,29 @@ docker compose -f docker-compose.thor.yml ps
 Profiles available: `sensors`, `slam`, `viz`, `record`, `full`, `fast-lio`,
 `glim-deprecated` (GLIM is deprecated for Ouster OS1-128 — too sparse).
 
-## What's running (2026-04-13)
+## What's running (2026-04-14)
 
 ### Sensors
-- **Ouster OS1-128** (`ouster`) — `/ouster/points` + `/ouster/imu` @ 10Hz, `TIME_FROM_ROS_TIME`
-- **A6701 #1/#2** (`thermal1`, `thermal2`) — `/thermal/cameraN/image_raw` @ ~19Hz via Spinnaker SDK (MAC-matched)
-- **A70 #1/#2** (`thermal3`, `thermal4`) — `/thermal/cameraN/image_raw` via Aravis, MAC-matched. A70 PTP node is non-writable (hardware limit), driver stamps in ROS time
-- **Blackfly S #2** (`blackfly2`) — `/blackfly/camera2/image_raw` @ 5Hz via spinnaker_camera_driver. **Blackfly #1 is open** (see `/home/thor/CLAUDE.md` Current Issues #15)
-- **Lucid Atlas #2** (`lucid2`) — `/lucid2/camera_driver/image_raw` @ 5Hz via Arena SDK. **Lucid #1 sfp28-7 rx-loss** (Current Issues #16)
-- **MicroStrain GQ7** (`microstrain`) — `/imu/data` @ 100Hz, `/gnss_{1,2}/*` via USB direct. After USB re-enum the container needs `up --force-recreate`, not `restart`
-- **Thermal colormap** (`thermal-colormap`) — inferno overlay on all four thermal cams
-- **Thermal temp publishers** — `/thermal/cameraN/{temperature,housing_temperature}` at 15s period. A6701 reports Stirling-cooled FPA (healthy ~-200°C), A70 reports body temp (healthy 25-50°C)
+- **Ouster OS1-128** (`ouster`) — `/ouster/points` + `/ouster/imu` @ 10 Hz, `TIME_FROM_ROS_TIME`
+- **A6701 #1/#2** (`thermal1`, `thermal2`) — `/thermal/cameraN/image_raw` @ ~15–18 Hz via Spinnaker PySpin (`bess-thermal-spinnaker`, MAC-matched)
+- **A70 #1/#2** (`thermal3`, `thermal4`) — **DOWN** (rcl node creation error, Issue #28). Driver is Aravis (`bess-thermal`), MAC-matched. A70 PTP node is non-writable (firmware limit), so driver host-stamps in ROS time when running
+- **Blackfly S #1/#2** (`blackfly1`, `blackfly2`) — `/blackfly/cameraN/image_raw` @ 5 Hz via `spinnaker_camera_driver` C++ (`bess-cameras`). PTP SlaveOnly + `device_link_throughput_limit` hard-set per Blackfly1 NVRAM recovery 2026-04-12
+- **Lucid Atlas #1/#2** — **SILENT ACQUISITION** (Issue #29). Topics exist, no data. `lucid2` logs show `SC_ERR_TIMEOUT -1011`. Cables OK per user 2026-04-14 — this is software, not physical
+- **MicroStrain GQ7** (`microstrain`) — `/imu/data` @ 100 Hz, `/gnss_{1,2}/*` via USB direct. After USB re-enum the container needs `up --force-recreate`, NOT `restart`
+- **Thermal colormap** (`thermal-colormap`) — inferno overlay on all four thermal cams (no-op on thermal3/4 while they're down)
+- **Thermal temp publishers** — `/thermal/cameraN/{temperature,housing_temperature}` at 15 s period. A6701 reports Stirling-cooled FPA (healthy ~-200 °C), A70 reports body temp (healthy 25–50 °C)
 
 ### SLAM
-- **FAST-LIO2** (`fast-lio`) — primary. `/slam/odometry` @ 10Hz, `base_link` TF. `map_en: false` — never re-enable, it chokes CycloneDDS
-- **DLIO** (`dlio`) — alternative. `/dlio/odom_node/odom` @ ~90Hz, `dlio_base_link` TF. Uses `/ouster/imu` (not GQ7) for monotonic stamps + co-located extrinsic
-- **Map accumulator** (`slam-map-accumulator`) — subscribes `/slam/cloud_registered`, publishes bounded `/slam/map_voxel` every 2s with TRANSIENT_LOCAL durability. 0.25m voxel, 2M voxel cap, FIFO evict
+- **FAST-LIO2** (`fast-lio`) — primary. `/fast_lio/odometry` @ 10 Hz, `base_link` TF via `fast_lio_tf_republisher`. `publish.map_en: false` — never re-enable, it chokes CycloneDDS. `filter_size_surf/map: 0.5/0.5` — do NOT lower while `cube_side_length: 1000.0` (PCL VoxelGrid int32 overflow, see Issue #25)
+- **DLIO** (`dlio`) — alternative. `/dlio/odom_node/odom` @ ~99 Hz, `dlio_base_link` TF (renamed so it doesn't fight FAST-LIO2 for `base_link`). Uses `/ouster/imu` for monotonic stamps + co-located extrinsic
+- **Map accumulator** (`slam-map-accumulator`) — subscribes `/fast_lio/cloud_registered`, publishes bounded `/fast_lio/map_voxel` with RELIABLE + TRANSIENT_LOCAL. Voxel size 0.12 m, 4 M voxel cap, FIFO evict (values per `scripts/slam_map_accumulator.py`)
 
 ### Infrastructure
 - **Foxglove bridge** (`foxglove`) — TLS via Tailscale cert, `wss://thor.tail902411.ts.net:8765`
-- **Recorder** (`recorder`) — MCAP to `/mnt/bess-usb/bags` (7.3T ext4 on HighPoint RM110). Records Ouster, IMU, all four thermal cams (raw + color + temperature + housing_temperature), both Lucids, Blackflys, GNSS, SLAM topics
+- **Recorder** (`recorder`) — **DISABLED as of 2026-04-14 (Issue #21)**. In `profiles: [record-disabled]`, `CAP_BYTES=100 GB`, `restart=no`. See `/home/thor/CLAUDE.md` Recording section for re-enable prereqs — do NOT start it before `/mnt/bess-usb` is mounted ext4 ≥ 500 GB free
 - **Soak monitor** (`scripts/soak_monitor.sh`) — ptp4l slave-offset + MikroTik SFP cage temp + thermal cam FPA watchdog (A6701 cryocooler fail, A70 bay overheat)
 - **PTP grandmaster** — `ptp4l-mgbe0.service` + `phc2sys-mgbe0.service` on host. `phc2sys -S 0` (never step), `utc_offset 0` announced, PHC1 is GM at `4cbb47.fffe.0dbe94`
+- **Auto-boot** — `ptp4l-mgbe0` + `phc2sys-mgbe0` auto-start ✓. `bess-stack`, `bess-network`, and `bess-time-bootstrap` are **kill-switch gated** after the 2026-04-14 boot-loop incident. All three units are disabled by default AND gated by `/etc/bess/no-auto-{stack,network,time}` files. See `systemd/etc-bess-README.md` for the enable/disable procedure. **Never re-introduce `After=` or `Wants=` chains between these three units** — that's what wedged the Tegra watchdog and caused the rapid-reboot loop
 
 ## SDK matrix (MANDATORY — wrong SDK locks hardware)
 

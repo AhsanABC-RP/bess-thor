@@ -13,14 +13,20 @@
     # was leaving residual pose error scan-to-scan that showed as ghosted
     # walls in the accumulated map.
     max_iteration: 4
-    # Was 0.5 on both — copied straight from upstream ouster64.yaml which
-    # was tuned for a Velodyne HDL-64 (~85k pts/scan, vertical FoV 26.9°).
-    # OS1-128 is ~131k pts/scan with 45° vertical, so we can voxelize finer
-    # without blowing up the kdtree. Going to 0.2 surf / 0.15 map matches
-    # DLIO's 0.10 preprocess voxel and gives crisp building edges instead
-    # of the 50cm "blur ball" the previous config produced.
-    filter_size_surf: 0.2
-    filter_size_map: 0.15
+    # Back to upstream ouster64.yaml values after the 0.2/0.15 attempt
+    # triggered `pcl::VoxelGrid::applyFilter Leaf size is too small for the
+    # input dataset. Integer indices would overflow` in fastlio_mapping:
+    # with cube_side_length = 1000 m, (1000/0.15)^3 ≈ 3e11 voxels, which
+    # blows past int32 max (~2.1e9). PCL VoxelGrid bails → effective_feat
+    # = 0 → "No Effective Points!" every scan → /fast_lio/odometry silent
+    # while DLIO (different downsampler, unaffected) ran normally at 99 Hz.
+    # The "crisp edge" argument for going finer was valid on a bounded
+    # per-scan cloud but ignored the map-side ikd-tree voxelization which
+    # bounds to the full local submap. Keep 0.5 / 0.5 until we either lower
+    # cube_side_length (FAST-LIO2 indoor default is 200) or move to a
+    # bounded-grid reimplementation of the map downsample.
+    filter_size_surf: 0.5
+    filter_size_map: 0.5
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
     map_file_path: "/tmp/fast_lio.pcd"
