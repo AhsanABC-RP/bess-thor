@@ -1,0 +1,39 @@
+# BESS Calibration Utility Container — MCAP↔ROS1 bag conversion + fisheye viz
+# Build: docker build -t localhost/bess-calib-util:jazzy -f Containerfile.util .
+#
+# Small sidecar container for things Kalibr's Noetic image can't ship:
+#   - rosbags (Ternaris, pypi) to convert captured Jazzy MCAP bags into
+#     ROS 1 .bag files that Kalibr consumes.
+#   - OpenCV 4.x (fisheye module) for sanity-checking intrinsics + making
+#     reprojection-error plots.
+#   - matplotlib for quick trajectory / Allan-deviation plots outside of
+#     Kalibr's built-in plot_trajectory script.
+#
+# Runs under ROS 2 Jazzy so it can read MCAP bags recorded by our stack
+# without needing to source any Noetic environment.
+
+FROM localhost/bess-base:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99-thor-clock-skew \
+    && echo 'Acquire::Check-Date "false";'  >> /etc/apt/apt.conf.d/99-thor-clock-skew \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip \
+        python3-opencv \
+        python3-matplotlib \
+        python3-numpy \
+        python3-scipy \
+        python3-yaml \
+        ros-jazzy-rosbag2-storage-mcap \
+        ros-jazzy-image-pipeline \
+    && rm -rf /var/lib/apt/lists/*
+
+# rosbags: MCAP ↔ ROS1 .bag pure-Python converter. Works without ROS sourced.
+RUN pip3 install --break-system-packages \
+        'rosbags>=0.10' \
+        'apriltag>=0.0.16'
+
+WORKDIR /data
+
+CMD ["/bin/bash", "-lc", "echo 'bess-calib-util:jazzy — rosbags-convert + OpenCV fisheye tools ready' && exec bash"]

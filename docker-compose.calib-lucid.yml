@@ -1,0 +1,79 @@
+# Calibration-mode override for Lucid Atlas cameras.
+#
+# PURPOSE
+#   The default lucid1 / lucid2 services in docker-compose.thor.yml run with
+#   `binning:=4` and `fps:=3.0`. 4x4 pixel binning drops the Lucid Atlas 64MP
+#   sensor (9568x6376 native) to 2392x1594 (1/16 pixel count) and is necessary
+#   for live 10GigE bandwidth when both cameras run concurrently (two 180 MB/s
+#   native streams would saturate the sfp28-7/8 uplink).
+#
+#   For intrinsic / extrinsic calibration we want the highest-resolution frames
+#   Kalibr can see — corner detection accuracy on the calib.io AprilGrid is
+#   pixel-limited at short-to-medium range. This override flips the Lucids to
+#   `binning:=1` (full 9568x6376) at `fps:=1.0`. At 1 fps mono each camera is
+#   ~60 MB/s (9568 * 6376 bytes * 1 fps), well inside the 10GigE link budget
+#   even with both running in parallel.
+#
+# APPLY
+#   The helper script `scripts/calib_capture.sh` applies and restores this
+#   override automatically when it detects a `lucid1` / `lucid2` namespace in
+#   the capture target. You should NEVER need to invoke this file manually
+#   during a normal capture run.
+#
+#   If you do want to drive it by hand:
+#     # Flip lucids to native calibration resolution
+#     docker compose -f docker-compose.thor.yml -f docker-compose.calib-lucid.yml \
+#         up -d --force-recreate --no-deps lucid1 lucid2
+#     # Verify
+#     docker logs lucid1 --tail 20  # expect: "Image size: 9568x6376"
+#     # ... run calibration capture ...
+#     # Restore default binning
+#     docker compose -f docker-compose.thor.yml \
+#         up -d --force-recreate --no-deps lucid1 lucid2
+#
+# DO NOT leave the override active after a calibration session. The Lucids at
+# native resolution will starve compress-lucid1 / compress-lucid2 CPU budget,
+# saturate the sfp28-7/8 pair, and make Foxglove iPad viz unusable.
+
+services:
+  lucid1:
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash 2>/dev/null || true
+        while true; do
+          echo "[lucid1] CALIBRATION MODE — Starting Lucid Atlas #1 at NATIVE resolution (binning=1, fps=1.0)..."
+          python3 /ros2_ws/lucid_node.py --ros-args \
+            -p camera_ip:=169.254.20.23 \
+            -p camera_name:=lucid1 \
+            -p frame_id:=lucid1_optical_frame \
+            -p fps:=1.0 \
+            -p binning:=1 \
+            -p exposure_us:=-1.0 \
+            -p gain_db:=-1.0 || true
+          echo "[lucid1] Exited, restarting in 5s..."
+          sleep 5
+        done
+
+  lucid2:
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash 2>/dev/null || true
+        while true; do
+          echo "[lucid2] CALIBRATION MODE — Starting Lucid Atlas #2 at NATIVE resolution (binning=1, fps=1.0)..."
+          python3 /ros2_ws/lucid_node.py --ros-args \
+            -p camera_ip:=169.254.20.14 \
+            -p camera_name:=lucid2 \
+            -p frame_id:=lucid2_optical_frame \
+            -p fps:=1.0 \
+            -p binning:=1 \
+            -p exposure_us:=-1.0 \
+            -p gain_db:=-1.0 || true
+          echo "[lucid2] Exited, restarting in 5s..."
+          sleep 5
+        done

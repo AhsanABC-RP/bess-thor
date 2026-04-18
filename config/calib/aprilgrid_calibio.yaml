@@ -1,0 +1,16 @@
+# AprilGrid target descriptor for Kalibr.
+# calib.io targets use tag family t36h11 which is Kalibr's only supported family.
+#
+# READ THE ACTUAL tagSize + tagSpacing OFF YOUR CALIB.IO DATASHEET.
+# The PDF that shipped with the printed target lists:
+#   - the black square edge length (metres) -> tagSize
+#   - the ratio of gap between tags to tagSize -> tagSpacing (typically 0.25 or 0.30)
+#
+# Defaults below match calib.io's "AprilGrid 6x6" 80mm target (a common SKU).
+# Replace tagRows/tagCols/tagSize/tagSpacing to match your physical target.
+
+target_type: 'aprilgrid'
+tagCols: 6               # number of apriltag columns
+tagRows: 6               # number of apriltag rows
+tagSize: 0.080           # edge-to-edge black square [m]
+tagSpacing: 0.3          # ratio = gap_between_tags / tagSize

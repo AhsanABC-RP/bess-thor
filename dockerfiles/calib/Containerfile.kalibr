@@ -1,0 +1,138 @@
+# BESS Calibration Container — Kalibr + allan_variance_ros (ROS Noetic, aarch64)
+# Build: docker build -t localhost/bess-calib-kalibr:noetic -f Containerfile.kalibr .
+#
+# Kalibr is the gold-standard multi-camera + IMU-camera spatiotemporal
+# calibration toolbox. It is ROS 1 Noetic only. We run it on Thor (aarch64)
+# by pulling the arm64v8/ros:noetic base which is a native aarch64 image.
+#
+# Upstream recipe: ethz-asl/kalibr/Dockerfile_ros1_20_04. The upstream FROM
+# is osrf/ros:noetic-desktop-full (amd64-only) so we swap to arm64v8/ros:noetic
+# and add the libopencv-dev + python3-wxgtk4.0 deps that desktop-full would
+# have brought in. Kalibr vendors its own opencv2_catkin / Schweizer-Messer /
+# aslam_* so no rosdep pass is required beyond the apt block below.
+#
+# Companion:
+#   - allan_variance_ros (ori-drs fork) for IMU noise priors (sigma_g, sigma_a,
+#     sigma_bg, sigma_ba) that Kalibr's imu-camera calibration expects. We
+#     deliberately skip the older imu_utils/code_utils which breaks on Ceres 2.x.
+#
+# AprilGrid target:
+#   The calib.io printed AprilGrid targets use tag family t36h11, which is
+#   Kalibr's only supported family. Read tagSize / tagSpacing off the calib.io
+#   datasheet PDF that shipped with the target. See config/calib/aprilgrid_*.yaml.
+
+FROM arm64v8/ros:noetic
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Kalibr + allan_variance_ros build-time + runtime dependencies.
+# Translated from upstream Dockerfile_ros1_20_04 apt blocks.
+#
+# Thor's wall clock is ~16h behind real UTC, so focal-updates/security Release
+# files look "not valid yet" to apt. `Check-Valid-Until=false` alone is NOT
+# enough — apt ALSO validates the Release file's `Date:` header against the
+# system clock, which requires `Check-Date=false`. With both disabled, apt
+# accepts the repos and dependency resolution works (we can't just delete
+# focal-updates because libopencv-dev's exact-version deps live there).
+# Drop both flags once Thor PHC1 is re-anchored (see PTP recipe in CLAUDE.md).
+RUN echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99-thor-clock-skew \
+    && echo 'Acquire::Check-Date "false";'  >> /etc/apt/apt.conf.d/99-thor-clock-skew \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        wget \
+        curl \
+        ca-certificates \
+        autoconf \
+        automake \
+        nano \
+        build-essential \
+        cmake \
+        pkg-config \
+        python3-dev \
+        python3-pip \
+        python3-scipy \
+        python3-matplotlib \
+        python3-wxgtk4.0 \
+        python3-tk \
+        python3-igraph \
+        python3-pyx \
+        python3-catkin-tools \
+        python3-osrf-pycommon \
+        ipython3 \
+        libeigen3-dev \
+        libboost-all-dev \
+        libsuitesparse-dev \
+        libpoco-dev \
+        libtbb-dev \
+        libblas-dev \
+        liblapack-dev \
+        libv4l-dev \
+        libopencv-dev \
+        libyaml-cpp-dev \
+        libgoogle-glog-dev \
+        doxygen \
+        x11-apps \
+        ros-noetic-tf2-geometry-msgs \
+        ros-noetic-rosbag \
+        ros-noetic-rosbag-storage \
+        ros-noetic-cv-bridge \
+        ros-noetic-image-transport \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build Kalibr + allan_variance_ros in one catkin workspace.
+WORKDIR /catkin_ws
+RUN mkdir -p src \
+    && . /opt/ros/noetic/setup.sh \
+    && catkin init \
+    && catkin config --extend /opt/ros/noetic \
+    && catkin config --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+RUN git clone --depth 1 https://github.com/ethz-asl/kalibr.git src/kalibr \
+    && git clone --depth 1 https://github.com/ori-drs/allan_variance_ros.git src/allan_variance_ros
+
+# Build. Kalibr aslam_optimizer linker peaks ~6 GB per job; Thor 128 GB can
+# take the full nproc but we cap to -j8 to stay friendly to concurrent work.
+RUN . /opt/ros/noetic/setup.sh \
+    && catkin build -j8 --no-status
+
+# Boost.Python init-order workaround for arm64 focal:
+#   `from cv_bridge.boost.cv_bridge_boost import ...` fails at first import
+#   with `SystemError: initialization of cv_bridge_boost raised unreported
+#   exception` unless the OpenCV Python module has already been imported
+#   (which pulls in the OpenCV C++ global state cv_bridge_boost.so relies on).
+#   The failure is specific to the arm64v8/ros:noetic multiarch port — amd64
+#   users don't see it because the native build binds differently.
+#   Fix: prepend `import cv2` to cv_bridge's package __init__.py. Every
+#   Kalibr entry point (kalibr_calibrate_cameras, kalibr_calibrate_imu_camera,
+#   kalibr_bagcreater, …) imports cv_bridge, so patching here covers all of
+#   them without touching Kalibr or allan_variance_ros source.
+RUN sed -i '1i import cv2  # aarch64 boost-python init-order fix (cv_bridge_boost)' \
+        /opt/ros/noetic/lib/python3/dist-packages/cv_bridge/__init__.py
+
+# Convenience: auto-source the workspace on interactive shells.
+RUN echo 'source /opt/ros/noetic/setup.bash' >> /root/.bashrc \
+    && echo 'source /catkin_ws/devel/setup.bash' >> /root/.bashrc
+
+# ROS 2 MCAP bags → ROS 1 .bag conversion tool (Ternaris rosbags). This is
+# what we feed into Kalibr since it only reads ROS 1 bags.
+# Noetic ships Python 3.8 (focal). `rosbags>=0.10` requires Python >=3.10, so
+# use the latest 0.9.x (0.9.23) which is py3.8-compatible. We don't rely on
+# this Python-in-Noetic copy for real MCAP↔bag conversion anyway — the calib
+# util container (bess-calib-util:jazzy, Python 3.12) has rosbags 0.11 for
+# that. The copy here is a convenience for poking at bags interactively from
+# inside the Kalibr shell.
+RUN pip3 install 'rosbags<0.10'
+
+# Keep KALIBR_MANUAL_FOCAL_LENGTH_INIT=1 off by default — tell users to set it
+# when the AprilGrid detection on fisheye frames fails to auto-init focal length.
+
+WORKDIR /data
+
+# Default: drop into an interactive bash. Users run:
+#   kalibr_calibrate_cameras --target /data/aprilgrid.yaml --bag /data/cam.bag \
+#       --models pinhole-equi pinhole-equi --topics /blackfly1/image_raw /blackfly2/image_raw
+#   kalibr_calibrate_imu_camera --target /data/aprilgrid.yaml --bag /data/imucam.bag \
+#       --cam /data/camchain.yaml --imu /data/imu.yaml
+#   rosrun allan_variance_ros allan_variance /data/imu_static.bag
+CMD ["/bin/bash", "-lc", "echo 'bess-calib-kalibr:noetic — tools at: kalibr_calibrate_cameras, kalibr_calibrate_imu_camera, allan_variance_ros' && exec bash"]
