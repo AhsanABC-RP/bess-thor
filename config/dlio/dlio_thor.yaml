@@ -22,36 +22,66 @@
     frames/lidar: dlio_lidar
     frames/imu: dlio_imu
 
-    map/waitUntilMove: false
+    # Upstream params.yaml default is true — delays keyframe creation until
+    # the vehicle actually moves. Prevents stale keyframes from being placed
+    # during the noisy IMU-calibration window at bag start.
+    map/waitUntilMove: true
     map/dense/filtered: true         # voxel-filter dense map — prevents unbounded RAM growth
     map/sparse/leafSize: 0.25
 
     odom/gravity: 9.80665
     odom/computeTimeOffset: true
 
-    odom/imu/approximateGravity: false
+    # approximateGravity was false. Upstream params.yaml default is true.
+    # DLIO odom.cc callbackImu() uses this to auto-estimate initial vehicle
+    # orientation from accumulated accel (gravity direction) post-calibration
+    # — decouples orientation from calibration quality so a noisy gyro bias
+    # estimate doesn't propagate as orientation drift. CRITICAL for bags
+    # that start in motion (rolling recorder — no stationary preamble).
+    # Without it, the 13 km / 354 km/h divergence observed on 2026-04-17
+    # is the direct signature of orientation drift compounding every scan.
+    odom/imu/approximateGravity: true
     odom/imu/calibration/gyro: true
     odom/imu/calibration/accel: true
-    odom/imu/calibration/time: 3.0
+    # Previous pass dropped 3.0 -> 0.5 reasoning that a moving-bag calibration
+    # absorbs vehicle motion as gyro bias. That's the right intuition but the
+    # research agent + odom.cc source review (callbackImu()) showed bias is
+    # extracted once and never re-estimated — a 0.5 s window is too noisy.
+    # Compromise at 1.5 s: long enough to average IMU noise, short enough that
+    # with approximateGravity=true above, orientation init doesn't depend on
+    # the bias estimate being clean. Upstream default is 3.0 (stationary
+    # preamble assumed).
+    odom/imu/calibration/time: 1.5
     odom/imu/bufferSize: 5000
 
     odom/preprocessing/cropBoxFilter/size: 1.0
-    # 0.25 was DLIO default — gave a "dot matrix" look in Foxglove because
-    # /dlio/odom_node/pointcloud/deskewed is published AFTER this filter, so
-    # one point per 25cm cube. Dropped to 0.10 → ~6x denser (200k → 30k stays
-    # at ~190k), modest extra GICP CPU. Lower further only if scenes are
-    # sparse and CPU has headroom.
-    odom/preprocessing/voxelFilter/res: 0.10
+    # Upstream params.yaml default is 0.25. Previous value 0.10 was set for
+    # visual density in Foxglove (dot-matrix look from sparse voxelization),
+    # but stresses GICP past the scan budget on OS1-128 (131k pts/scan →
+    # ~80k post-filter at 0.10 vs ~25-30k at 0.25 — 2.5-3x more GICP work).
+    # Revert to upstream default; the "dot matrix" was cosmetic and the
+    # deskewed cloud is only for visualization anyway.
+    odom/preprocessing/voxelFilter/res: 0.25
 
     odom/keyframe/threshD: 1.0
     odom/keyframe/threshR: 45.0
 
-    odom/submap/keyframe/knn: 5      # was 10 — halves submap working set
-    odom/submap/keyframe/kcv: 5
-    odom/submap/keyframe/kcc: 5
+    # Upstream params.yaml defaults are 10/10/10. Halving to 5/5/5 starves
+    # the submap — GICP fits against too-few keyframes, converges to local
+    # minima with no leverage to correct, cumul drift explodes. Contributor
+    # to the 13 km divergence on 2026-04-17.
+    odom/submap/keyframe/knn: 10
+    odom/submap/keyframe/kcv: 10
+    odom/submap/keyframe/kcc: 10
     odom/gicp/minNumPoints: 64
     odom/gicp/kCorrespondences: 16
-    odom/gicp/maxCorrespondenceDistance: 0.5
+    # Tightened 0.5 -> 0.25. With voxelFilter/res 0.25 above, 0.5 m allowed
+    # GICP correspondence matches across 2x2 voxel neighborhoods in sparse
+    # or degenerate geometry (featureless hallway, open field) → converges
+    # to local minima ~0.5 m off per scan. 0.25 m (~1 voxel width) keeps
+    # correspondences high-confidence. DLIO does NOT skip bad registrations
+    # per odom.cc getNextPose(), so this is the primary robustness knob.
+    odom/gicp/maxCorrespondenceDistance: 0.25
     odom/gicp/maxIterations: 32
     odom/gicp/transformationEpsilon: 0.01
     odom/gicp/rotationEpsilon: 0.01
@@ -77,13 +107,24 @@
                                  0.,  0.,  1. ]
     imu/intrinsics/gyro/bias: [ 0.0, 0.0, 0.0 ]
 
-    # Ouster OS1-128 IMU to lidar extrinsics (from sensor metadata)
-    # imu_to_sensor_transform: [1,0,0,-2.441, 0,1,0,-9.725, 0,0,1,7.533, 0,0,0,1]
-    extrinsics/baselink2imu/t: [ 0.0, 0.0, 0.0 ]
+    # Ouster OS1-128 frame hierarchy (from sensor metadata for serial 122313000586):
+    #   os_sensor ─ identity R, t=0     ← DLIO baselink = os_sensor
+    #   os_sensor → os_lidar : Rz(180°), t = (0, 0, 0.0382) m
+    #   os_sensor → os_imu   : identity R,  t = (-0.002441, -0.009725, 0.007533) m
+    #
+    # Prior versions had both extrinsics as identity. That meant DLIO's GICP
+    # registered /ouster/points (which arrives in the os_lidar frame, i.e.
+    # rotated 180° about Z from os_sensor) directly against prior keyframes
+    # — the 180° residual was absorbed into the first pose and propagated as
+    # a world-frame yaw. DLIO masked it via GICP robustness so it was never
+    # a headline bug, but it diverged FAST-LIO2 and DLIO world frames. See
+    # fast_lio_single.yaml extrinsic_R comment for the same fix on the LIO
+    # side. Translation offsets are sub-cm and mostly cosmetic.
+    extrinsics/baselink2imu/t: [ -0.002441, -0.009725, 0.007533 ]
     extrinsics/baselink2imu/R: [ 1.,  0.,  0.,
                                  0.,  1.,  0.,
                                  0.,  0.,  1. ]
-    extrinsics/baselink2lidar/t: [ 0.0, 0.0, 0.0 ]
-    extrinsics/baselink2lidar/R: [ 1.,  0.,  0.,
-                                   0.,  1.,  0.,
-                                   0.,  0.,  1. ]
+    extrinsics/baselink2lidar/t: [ 0.0, 0.0, 0.0382 ]
+    extrinsics/baselink2lidar/R: [ -1.,  0.,  0.,
+                                    0., -1.,  0.,
+                                    0.,  0.,  1. ]
