@@ -71,7 +71,32 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
                      -DCMAKE_SHARED_LINKER_FLAGS='-Wl,--allow-shlib-undefined' \
         --executor sequential"
 
+# Disable depth modes that require TensorRT + neural depth model files. Our
+# SDK install uses `skip_od_module` to avoid the 4+ GB AI download, so the
+# default wrapper config (`depth_mode: NEURAL_LIGHT`) returns "CORRUPTED SDK
+# INSTALLATION" at Camera::open(). Set NONE to enable RGB + IMU publishing.
+# Positional tracking requires depth, so disable it too. Re-enable both after
+# TensorRT + ZED AI resources are wired in via a follow-up build.
+RUN sed -i \
+        -e "s/depth_mode: 'NEURAL_LIGHT'/depth_mode: 'NONE'/" \
+        -e "s/pos_tracking_enabled: true/pos_tracking_enabled: false/" \
+        /ros2_ws/install/zed_wrapper/share/zed_wrapper/config/common_stereo.yaml \
+    && grep -E "(depth_mode|pos_tracking_enabled)" \
+        /ros2_ws/install/zed_wrapper/share/zed_wrapper/config/common_stereo.yaml
+
 ENV ROS_DOMAIN_ID=0
+
+# CUDA forward-compat shim override. nvidia-container-toolkit bind-mounts
+# /etc/ld.so.conf.d/00-compat-<rand>.conf pointing at /usr/local/cuda-13.0/compat,
+# which contains libcuda.so.580.65.06 — the CUDA 13 forward-compat shim built
+# for a generic Linux NVIDIA driver. Thor's driver is a Tegra-specific 580.00
+# "TempVersion" build with a different ABI surface; calls routed through the
+# compat shim return cudaErrorSystemDriverMismatch (803) on every cudaMalloc.
+# Prepending the nvidia bind-mount dir forces libcuda.so.1 to resolve to the
+# driver-native /usr/lib/aarch64-linux-gnu/nvidia/libcuda.so.1.1 first.
+# Verified 2026-04-18: without this, cudaGetDeviceCount → 803; with it,
+# NVIDIA Thor CC 11.0 (20 SMs) detected and cudaMalloc succeeds.
+ENV LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/usr/local/zed/lib
 
 # Default command: launch ZED 2i wrapper. Override camera_model at runtime for
 # other ZED variants (zed, zedm, zed2, zedx, zedxm, etc.).
