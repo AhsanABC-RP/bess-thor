@@ -19,7 +19,15 @@
     # User verdict: drive1_fix (max_iter=3) > drive1_half (0.5x max_iter=5) on
     # visual rotation quality. 22% drops still produce some ghost, but those
     # are minor vs. the iEKF-overshoot snap.
-    point_filter_num: 3
+    # 2026-04-18 Round 3 — highway tune. point_filter_num 3 kept drive1 at
+    # 7.83 Hz (not pegged 10 Hz — there's slack), bags 40-45 dropped to
+    # 5.72 Hz (iEKF compute budget exhausted per laserMapping.cpp:938-960
+    # Nearest_Search super-linear in map density). Paper uses 1:4 temporal
+    # downsample (arxiv 2107.06829 Tab. VIII). 3 → 4 saves ~25% compute/scan
+    # on OS1-128 without starving iEKF features — effective ~33k pts/scan
+    # post-surf-voxel still plenty for iEKF convergence. Urban won't regress
+    # — it was not compute-bound.
+    point_filter_num: 4
     max_iteration: 3
     # Highway map bound: cube 800 gives ~40 s of driving at 20 m/s before pts
     # drop from local map. (800/0.5)^3 = 4.1e9 — exceeds int32, but in practice
