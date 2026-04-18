@@ -1,0 +1,18 @@
+{
+  /*** GLIM offline-replay dispatcher for Thor ***
+  // Swaps the sensors file to the Thor-specific extrinsic, keeps CPU pipeline
+  // (container image has no libodometry_estimation_gpu.so despite the name).
+  // use_sim_time is a ROS2 node param passed at CLI, not here.
+  */
+  "global": {
+    "config_path": "",
+    "config_ros": "config_ros_offline.json",
+    "config_logging": "config_logging.json",
+    "config_viewer": "config_viewer.json",
+    "config_sensors": "config_sensors_thor.json",
+    "config_preprocess": "config_preprocess.json",
+    "config_odometry": "config_odometry_cpu.json",
+    "config_sub_mapping": "config_sub_mapping_cpu.json",
+    "config_global_mapping": "config_global_mapping_cpu.json"
+  }
+}

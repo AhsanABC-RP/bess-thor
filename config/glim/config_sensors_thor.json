@@ -1,0 +1,39 @@
+{
+  /*** Sensors — Thor Ouster OS1-128 + built-in BMI085 IMU ***
+  // T_lidar_imu = pose of IMU in lidar frame, [tx, ty, tz, qx, qy, qz, qw].
+  // Computed from Ouster sensor metadata (serial 122313000586):
+  //   os_sensor -> os_lidar : R = Rz(180 deg), t = (0, 0, 0.0382) m
+  //   os_sensor -> os_imu   : R = identity,   t = (-0.0024, -0.0097, 0.0075) m
+  //   => T_lidar_imu = T_lidar_sensor * T_sensor_imu
+  //                  = (Rz(180), (0,0,-0.0382)) * (I, (-0.0024, -0.0097, 0.0075))
+  //                  = (Rz(180), (0.0024, 0.0097, -0.0307))
+  // The previous config had t = (-0.015, 0, -0.20) which was wrong on Z (-20 cm
+  // instead of -3 cm), source of GLIM's historical "too sparse" behaviour on
+  // this rig — preintegration starts 17 cm off-axis, every keyframe drifts.
+  //
+  // IMU noise characteristics for BMI085 in the OS1. Keep defaults of upstream
+  // config_sensors.json (accel 0.002, gyro 0.0005, bias 1e-6, int 0.0001) —
+  // those are in line with a MEMS datasheet and GLIM's iSAM2 handles this band
+  // well.
+  */
+  "sensors": {
+    "T_lidar_imu": [
+      0.0024,
+      0.0097,
+      -0.0307,
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    "autoconf_perpoint_times": true,
+    "autoconf_prefer_frame_time": false,
+    "global_shutter_lidar": false,
+    "imu_acc_noise": 0.002,
+    "imu_gyro_noise": 0.0005,
+    "imu_bias_noise": 1e-06,
+    "imu_int_noise": 0.0001,
+    "intensity_field": "intensity",
+    "ring_field": ""
+  }
+}

@@ -537,7 +537,13 @@ def main():
     # output directly. DLIO integrates IMU continuously inside each 100 ms scan
     # to deskew, so the result is far more faithful than SLERPing the published
     # pose stream across scan-internal time bins.
-    cloud_already_world = "deskewed" in args.cloud_topic
+    # GLIM's /glim_ros/aligned_points_corrected is also in the world frame
+    # (rviz_viewer.cpp:466 transforms points by T_world_sensor before publish),
+    # same pattern as DLIO's deskewed topic — bypass exporter SLERP-deskew.
+    cloud_already_world = (
+        "deskewed" in args.cloud_topic
+        or "aligned_points" in args.cloud_topic
+    )
     T_body_lidar = build_body_lidar_extrinsic(args)
     if cloud_already_world:
         print(f"\n[2/3] Concatenating SLAM-deskewed clouds from {args.cloud_topic} "
