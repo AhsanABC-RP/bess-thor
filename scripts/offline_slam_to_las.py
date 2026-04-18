@@ -49,6 +49,12 @@ def parse_args():
                    help="Override 3x3 rotation body<-lidar (row-major, 9 floats)")
     p.add_argument("--extrinsic-T", type=float, nargs=3, default=None,
                    help="Override 3x1 translation body<-lidar (3 floats, meters)")
+    p.add_argument("--max-speed", type=float, default=30.0,
+                   help="Audit-gate p99 speed threshold in m/s (default 30). Raise to 50 for highway bags (UK motorway ~31 m/s).")
+    p.add_argument("--max-extent", type=float, default=2000.0,
+                   help="Audit-gate per-axis extent threshold in m (default 2000).")
+    p.add_argument("--force", action="store_true",
+                   help="Downgrade audit FAIL to WARN and proceed with LAS export anyway. Use only when you already understand the divergence (e.g. known FAST-LIO2 Z drift).")
     p.add_argument("--deskew-bins", type=int, default=64,
                    help="Number of time buckets per 100 ms scan for per-point "
                         "de-skew (default 64 → ~1.5 ms bucket → ~2 cm residual "
@@ -109,7 +115,7 @@ def _parse_odometry_cdr(data):
     return sec * 10**9 + nanosec, (px, py, pz), (qx, qy, qz, qw)
 
 
-def load_odometry(files, odom_topic):
+def load_odometry(files, odom_topic, max_speed_mps=30.0, max_extent_m=2000.0, force=False):
     """Extract all odometry poses as (timestamp_ns, 4x4 matrix) pairs.
 
     Streaming read via StreamReader so truncated/un-indexed MCAP files
@@ -148,7 +154,7 @@ def load_odometry(files, odom_topic):
     poses.sort(key=lambda x: x[0])
     print(f"  Loaded {len(poses)} odometry poses")
     poses = _decimate_burst_poses(poses)
-    _audit_poses(poses)
+    _audit_poses(poses, max_speed_mps=max_speed_mps, max_extent_m=max_extent_m, force=force)
     return poses
 
 
@@ -194,7 +200,7 @@ def _decimate_burst_poses(poses, min_dt_ms=5.0):
     return out
 
 
-def _audit_poses(poses, max_speed_mps=30.0, max_extent_m=2000.0):
+def _audit_poses(poses, max_speed_mps=30.0, max_extent_m=2000.0, force=False):
     """Sanity-check SLAM odom before LAS export. Prints PASS/WARN/FAIL card
     and raises on divergent trajectories — catches garbage poses before 2+
     minutes of LAS write time is spent on them.
@@ -238,10 +244,13 @@ def _audit_poses(poses, max_speed_mps=30.0, max_extent_m=2000.0):
           f"{cumul:.0f} m cumul / p99 {p99_speed:.2f} m/s (max {max_speed:.1f}) / "
           f"extent {extent[0]:.0f}x{extent[1]:.0f}x{extent[2]:.0f} m")
     if p99_speed > max_speed_mps or max(extent) > max_extent_m:
-        print(f"  AUDIT: FAIL — p99_speed={p99_speed:.1f} m/s "
+        verdict = "WARN (forced)" if force else "FAIL"
+        print(f"  AUDIT: {verdict} — p99_speed={p99_speed:.1f} m/s "
               f"max_extent={max(extent):.0f} m. Trajectory looks divergent; "
               f"re-tune SLAM before wasting LAS write time.")
-        raise SystemExit(2)
+        if not force:
+            raise SystemExit(2)
+        return
     if p99_speed > max_speed_mps * 0.5 or rate < 5.0:
         print(f"  AUDIT: WARN — p99_speed={p99_speed:.1f} m/s rate={rate:.2f} Hz")
     else:
@@ -514,7 +523,10 @@ def main():
         print(f"  Reading odom from {len(odom_files)} bag(s) in {args.odom_bag_dir}")
     else:
         odom_files = files
-    poses = load_odometry(odom_files, args.odom_topic)
+    poses = load_odometry(odom_files, args.odom_topic,
+                          max_speed_mps=args.max_speed,
+                          max_extent_m=args.max_extent,
+                          force=args.force)
     if not poses:
         print("ERROR: No odometry poses found. Cannot proceed.")
         sys.exit(1)
