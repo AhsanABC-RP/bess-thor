@@ -257,6 +257,151 @@ def _audit_poses(poses, max_speed_mps=30.0, max_extent_m=2000.0, force=False):
         print(f"  AUDIT: PASS")
 
 
+def _pose_stats(poses):
+    """Compute sanity metrics from a list of (ts_ns, 4x4 pose) tuples.
+    Returns a dict with span_s, rate_hz, cumul_m, mean_speed_mps,
+    p99_speed_mps, max_speed_mps, max_dt_s, rot_span_rad, extent_{x,y,z}."""
+    if len(poses) < 2:
+        return {
+            "pose_count": len(poses), "span_s": 0.0, "rate_hz": 0.0,
+            "cumul_m": 0.0, "mean_speed_mps": 0.0,
+            "p99_speed_mps": 0.0, "max_speed_mps": 0.0, "max_dt_s": 0.0,
+            "rot_span_rad": 0.0, "extent_x": 0.0, "extent_y": 0.0, "extent_z": 0.0,
+        }
+    t0, t1 = poses[0][0], poses[-1][0]
+    span = (t1 - t0) / 1e9
+    cumul = 0.0
+    speeds = []
+    dts = []
+    rot_span = 0.0
+    for i in range(1, len(poses)):
+        dt = (poses[i][0] - poses[i - 1][0]) / 1e9
+        if dt <= 0:
+            continue
+        dts.append(dt)
+        dp = poses[i][1][:3, 3] - poses[i - 1][1][:3, 3]
+        d = float(np.linalg.norm(dp))
+        cumul += d
+        speeds.append(d / dt)
+        R0 = poses[i - 1][1][:3, :3]
+        R1 = poses[i][1][:3, :3]
+        # Rotation angle between consecutive frames via trace of R0^T R1.
+        # Clamp to avoid arccos domain errors from floating-point noise.
+        cos_theta = float(np.clip((np.trace(R0.T @ R1) - 1.0) * 0.5, -1.0, 1.0))
+        rot_span += float(np.arccos(cos_theta))
+    xs = np.array([p[1][0, 3] for p in poses])
+    ys = np.array([p[1][1, 3] for p in poses])
+    zs = np.array([p[1][2, 3] for p in poses])
+    speeds_arr = np.asarray(speeds) if speeds else np.zeros(1)
+    return {
+        "pose_count": len(poses),
+        "span_s": span,
+        "rate_hz": (len(poses) - 1) / span if span > 0 else 0.0,
+        "cumul_m": cumul,
+        "mean_speed_mps": cumul / span if span > 0 else 0.0,
+        "p99_speed_mps": float(np.percentile(speeds_arr, 99.0)) if speeds else 0.0,
+        "max_speed_mps": float(speeds_arr.max()) if speeds else 0.0,
+        "max_dt_s": float(max(dts)) if dts else 0.0,
+        "rot_span_rad": rot_span,
+        "extent_x": float(xs.max() - xs.min()),
+        "extent_y": float(ys.max() - ys.min()),
+        "extent_z": float(zs.max() - zs.min()),
+    }
+
+
+def write_sanity_card(out_dir, poses, las_path=None, copc_path=None,
+                      total_scans=0, pre_voxel_points=0, post_voxel_points=0,
+                      voxel_m=0.0, cloud_topic="", odom_topic="",
+                      max_speed_mps=30.0, max_extent_m=2000.0):
+    """Write <out_dir>/sanity.txt with an at-a-glance forensics card.
+
+    Called at export end so users can catch 'DLIO went to 354 km/h' style
+    failures without opening CloudCompare on a 5GB LAS. Returns the verdict
+    string (PASS / WARN / FAIL). Caller decides whether a FAIL should exit.
+    """
+    s = _pose_stats(poses)
+    extent_max = max(s["extent_x"], s["extent_y"], s["extent_z"])
+
+    def _fsize_gb(path):
+        try:
+            return os.path.getsize(path) / (1024 ** 3) if path and os.path.exists(path) else None
+        except OSError:
+            return None
+
+    las_gb = _fsize_gb(las_path)
+    copc_gb = _fsize_gb(copc_path)
+
+    reasons = []
+    if s["mean_speed_mps"] > max_speed_mps:
+        reasons.append(f"mean_speed={s['mean_speed_mps']:.1f}>{max_speed_mps} m/s")
+    if s["p99_speed_mps"] > max_speed_mps:
+        reasons.append(f"p99_speed={s['p99_speed_mps']:.1f}>{max_speed_mps} m/s")
+    if extent_max > max_extent_m:
+        reasons.append(f"extent={extent_max:.0f}>{max_extent_m} m")
+    if s["rate_hz"] > 0 and s["rate_hz"] < 5.0:
+        warn_rate = f"rate={s['rate_hz']:.2f}<5.0 Hz"
+    else:
+        warn_rate = None
+
+    if reasons:
+        verdict = "FAIL"
+    elif s["p99_speed_mps"] > max_speed_mps * 0.5 or warn_rate or s["max_dt_s"] > 1.0:
+        verdict = "WARN"
+    else:
+        verdict = "PASS"
+
+    lines = [
+        f"SLAM export sanity card",
+        f"=======================",
+        f"verdict          : {verdict}",
+        f"",
+        f"odom_topic       : {odom_topic}",
+        f"cloud_topic      : {cloud_topic}",
+        f"",
+        f"pose_count       : {s['pose_count']:,}",
+        f"time_span_s      : {s['span_s']:.2f}",
+        f"pose_rate_hz     : {s['rate_hz']:.2f}",
+        f"max_inter_pose_dt: {s['max_dt_s']*1000:.1f} ms",
+        f"",
+        f"cumul_distance_m : {s['cumul_m']:.1f}",
+        f"mean_speed_mps   : {s['mean_speed_mps']:.2f}",
+        f"p99_speed_mps    : {s['p99_speed_mps']:.2f}",
+        f"max_speed_mps    : {s['max_speed_mps']:.1f}",
+        f"rotation_span_deg: {np.degrees(s['rot_span_rad']):.1f}",
+        f"",
+        f"extent_x_m       : {s['extent_x']:.1f}",
+        f"extent_y_m       : {s['extent_y']:.1f}",
+        f"extent_z_m       : {s['extent_z']:.1f}",
+        f"",
+        f"total_scans      : {total_scans:,}",
+        f"pre_voxel_points : {pre_voxel_points:,}",
+        f"post_voxel_points: {post_voxel_points:,}",
+        f"voxel_m          : {voxel_m}",
+        f"las_size_gb      : {f'{las_gb:.2f}' if las_gb is not None else 'n/a'}",
+        f"copc_size_gb     : {f'{copc_gb:.2f}' if copc_gb is not None else 'n/a'}",
+        f"",
+        f"gate_max_speed_mps : {max_speed_mps}",
+        f"gate_max_extent_m  : {max_extent_m}",
+    ]
+    if reasons:
+        lines.append("")
+        lines.append(f"fail_reasons     : {'; '.join(reasons)}")
+    if warn_rate:
+        lines.append(f"warn_rate        : {warn_rate}")
+
+    card_path = os.path.join(out_dir, "sanity.txt")
+    with open(card_path, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print(f"\nSanity card: {card_path}  [{verdict}]")
+    print(f"  {s['pose_count']:,} poses / {s['span_s']:.0f}s / {s['rate_hz']:.1f} Hz / "
+          f"{s['cumul_m']:.0f} m cumul / mean {s['mean_speed_mps']:.1f} m/s / "
+          f"p99 {s['p99_speed_mps']:.1f} m/s / max_dt {s['max_dt_s']*1000:.0f} ms / "
+          f"rot {np.degrees(s['rot_span_rad']):.0f}°")
+    if reasons:
+        print(f"  FAIL reasons: {'; '.join(reasons)}")
+    return verdict
+
+
 def interpolate_pose(poses, ts):
     """Linearly interpolate pose at timestamp ts (nanoseconds)."""
     if not poses:
@@ -703,16 +848,35 @@ def main():
     las_path = os.path.join(out_dir, "site_trial.las")
     write_las(las_path, points)
 
+    copc_path = None
     if not args.skip_copc:
         copc_path = os.path.join(out_dir, "site_trial.copc.laz")
         try:
             write_copc(las_path, copc_path)
         except Exception as e:
             print(f"  COPC conversion failed: {e}")
+            copc_path = None
+
+    verdict = write_sanity_card(
+        out_dir, poses,
+        las_path=las_path, copc_path=copc_path,
+        total_scans=total_scans,
+        pre_voxel_points=total_points,
+        post_voxel_points=len(points['xyz']),
+        voxel_m=args.voxel,
+        cloud_topic=args.cloud_topic,
+        odom_topic=args.odom_topic,
+        max_speed_mps=args.max_speed,
+        max_extent_m=args.max_extent,
+    )
 
     total_time = time.time() - t0
     print(f"\nDone in {total_time:.0f}s ({total_time/60:.1f} min)")
     print(f"Output: {out_dir}")
+
+    if verdict == "FAIL" and not args.force:
+        print("ERROR: sanity card FAIL — see sanity.txt. Pass --force to override.")
+        sys.exit(3)
 
 
 if __name__ == "__main__":
