@@ -7,16 +7,32 @@
 /**:
   ros__parameters:
     feature_extract_enable: false
-    # Highway-tuned (2026-04-17): point_filter_num 2→3 to stay under 40 ms/scan
-    # at 10 Hz so iEKF doesn't fall behind when CPU is shared (e.g. live stack
-    # still running). At ~20 m/s the per-scan relative motion is ~2 m, which
-    # well-bounded by 5 iEKF iterations against 0.5 m voxels.
+    # point_filter_num: 3 is upstream Ericsii ouster64.yaml default; drops OS1-128
+    # per-scan load 131k → ~44k pts so iEKF fits inside the 100 ms scan period for
+    # low-motion urban phase. max_iteration: 3 (upstream default) chosen 2026-04-18
+    # after comparing 5 vs 3 visually on drive1 at 1.0x. Both had ~22% scan drops
+    # during highway phase (iEKF overrun), but max_iter=5 also produced a visible
+    # snap/jerk at sharp turns that was ABSENT at max_iter=3. Interpretation: at
+    # max_iter=5 the iEKF converges hard and during turns (ambiguous features,
+    # rapid scene change) sometimes locks onto a wrong minimum — pose jumps.
+    # max_iter=3 under-refines, stays closer to IMU prediction, smoother poses.
+    # User verdict: drive1_fix (max_iter=3) > drive1_half (0.5x max_iter=5) on
+    # visual rotation quality. 22% drops still produce some ghost, but those
+    # are minor vs. the iEKF-overshoot snap.
     point_filter_num: 3
-    max_iteration: 5
+    max_iteration: 3
     # Highway map bound: cube 800 gives ~40 s of driving at 20 m/s before pts
     # drop from local map. (800/0.5)^3 = 4.1e9 — exceeds int32, but in practice
     # the map BBOX is bounded by det_range (150 m) not cube, so PCL VoxelGrid
     # index never hits (1600)^3. Do NOT lower filter_size_map below 0.5.
+    #
+    # 2026-04-18 attempt: dropped 0.5 → 0.25 thinking 0.27 m scan-to-scan RMSE
+    # was voxel quantization (half-voxel residual). Result: pose rate 7.74 → 3.71 Hz,
+    # Z extent 10 → 65 m (catastrophic), cumul 528 → 739 m (drift). The RMSE of
+    # the registered pairs stayed at 0.26 m — unchanged. Conclusion: ghost is NOT
+    # voxel quantization; reverting to 0.5. Real ghost source TBD — next suspects
+    # are the Ouster per-point t-field deskew convention and lidar↔imu extrinsic
+    # direction.
     filter_size_surf: 0.5
     filter_size_map: 0.5
     cube_side_length: 800.0
@@ -40,8 +56,16 @@
       blind: 1.0                       # Minimum range (meters)
 
     mapping:
-      acc_cov: 0.1
-      gyr_cov: 0.1
+      # 2026-04-18: bumped acc/gyr_cov 0.1 → 0.5 after 0.5x max_iter=3 ran with
+      # clean 9.99 Hz cadence + 0 drops on straights but showed pose snap at
+      # every rotation. Ericsii ouster64.yaml uses 0.1 (tight — assumes Ouster
+      # Livox-like IMU precision); hku-mars upstream FAST_LIO uses 0.5 for all
+      # Ouster rigs. The BMI085 on OS1-128 is a cheap MEMS IMU with actual
+      # gyro noise well above 0.1 rad²/s — iEKF was over-confident in IMU
+      # prediction, so when a turn happens LiDAR has to hard-correct = snap.
+      # Looser cov weights LiDAR scan match higher → smoother correction.
+      acc_cov: 0.5
+      gyr_cov: 0.5
       b_acc_cov: 0.0001
       b_gyr_cov: 0.0001
       fov_degree: 360.0
