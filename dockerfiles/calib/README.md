@@ -12,6 +12,23 @@ process.
 Separate `bess-calib-dvlc` (koide3/direct_visual_lidar_calibration, ROS 2
 Humble) will be added when we start lidar↔camera extrinsic calibration.
 
+## Camera L/R identity — READ BEFORE ORDERING STEREO ARGS
+
+Container names (`blackflyN`, `thermalN`, `lucidN`) **do NOT track left/right**.
+The identity-of-truth is `config/camera_rig.yaml` (hand-wave test, 2026-04-18).
+Container renames are a deferred follow-up.
+
+| Side | Lucid | Blackfly S | A6701 (MWIR) | A70 (LWIR) |
+|------|-------|------------|--------------|------------|
+| **left**  | `lucid1` | `blackfly2` | `thermal2` | `thermal4` |
+| **right** | `lucid2` | `blackfly1` | `thermal1` | `thermal3` |
+
+3 of 4 pairs are crossed — only Lucid has container# matching side.
+When a stereo-pair example below reads `cam-stereo <sess> blackfly1 blackfly2`,
+that is `right left` order. Pass the pair in whatever order you want (Kalibr
+does not care), but label the output yaml accordingly so the `T_cn_cnm1`
+extrinsic is not read upside-down downstream.
+
 ## Building
 
 ```bash
