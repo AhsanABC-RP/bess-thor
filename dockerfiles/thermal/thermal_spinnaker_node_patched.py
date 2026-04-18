@@ -147,7 +147,9 @@ class ThermalSpinnakerNode(Node):
                 model = model_node.GetValue()
                 mac = self._get_cam_mac(cam)
                 ip = self._get_cam_ip(cam)
-                self.get_logger().info(f'  [{i}] {model}  mac={mac}  ip={ip}')
+                sn_node = PySpin.CStringPtr(tl.GetNode('DeviceSerialNumber'))
+                sn = sn_node.GetValue() if (sn_node.IsValid() and PySpin.IsReadable(sn_node)) else '?'
+                self.get_logger().info(f'  [{i}] {model}  mac={mac}  ip={ip}  sn={sn}')
 
                 # Match by MAC if specified
                 if self.camera_mac:

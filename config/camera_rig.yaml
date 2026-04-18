@@ -1,0 +1,107 @@
+# Thor camera rig — left/right identity
+# Calibrated by live Foxglove observation (hand-wave test), 2026-04-18
+#
+# NOTES:
+# - "left" / "right" are from the vehicle's forward-facing perspective
+#   (driver POV looking forward down the road)
+# - Canonical identifier is MAC. IP, port, serial are all derivative.
+# - Container/frame_id renames (thermal_left etc.) are a separate follow-up.
+
+cameras:
+  lucid_left:
+    model: "Lucid Atlas ATX650G-C"
+    mac: "1c:0f:af:07:a9:cd"
+    serial: "231800447"
+    ip: "169.254.20.23"
+    mikrotik_port: sfp28-7
+    current_container: lucid1
+    current_frame_id: lucid1_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:47Z"
+    confirmed_by: "user hand-wave test in foxglove"
+
+  lucid_right:
+    model: "Lucid Atlas ATX650G-C"
+    mac: "1c:0f:af:07:a9:e7"
+    serial: "231800449"
+    ip: "169.254.20.14"
+    mikrotik_port: sfp28-8
+    current_container: lucid2
+    current_frame_id: lucid2_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:47Z"
+    confirmed_by: "user hand-wave test in foxglove"
+
+  # --- UNCONFIRMED pairs below — awaiting live hand-wave test ---
+
+  a6701_left:   # Stirling-cooled InSb MWIR
+    model: "FLIR A6701 (Stirling-cooled InSb MWIR)"
+    mac: "00:11:1c:05:8f:27"
+    serial: "FIRMWARE_UNAVAILABLE"   # A6701 Xsc Series firmware returns empty DeviceSerialNumber via GVCP, PySpin, and SpinView. Read off body sticker only.
+    ip: "169.254.249.149"
+    mikrotik_port: sfp28-2
+    current_container: thermal2
+    current_frame_id: thermal2_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:49Z"
+    confirmed_by: "user hand-wave test in foxglove"
+
+  a6701_right:  # Stirling-cooled InSb MWIR
+    model: "FLIR A6701 (Stirling-cooled InSb MWIR)"
+    mac: "00:11:1c:05:8f:20"
+    serial: "FIRMWARE_UNAVAILABLE"   # A6701 Xsc Series firmware returns empty DeviceSerialNumber via GVCP, PySpin, and SpinView. Read off body sticker only.
+    ip: "169.254.172.237"
+    mikrotik_port: sfp28-14
+    current_container: thermal1
+    current_frame_id: thermal1_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:49Z"
+    confirmed_by: "user hand-wave test in foxglove"
+
+  a70_left:   # uncooled VOx LWIR
+    model: "FLIR A70 (uncooled VOx LWIR)"
+    mac: "00:40:7f:11:04:ea"
+    serial: "89901856"
+    ip: "169.254.20.2"
+    mikrotik_port: sfp28-4
+    current_container: thermal4
+    current_frame_id: thermal4_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:49Z"
+    confirmed_by: "user hand-wave test in foxglove"
+
+  a70_right:  # uncooled VOx LWIR
+    model: "FLIR A70 (uncooled VOx LWIR)"
+    mac: "00:40:7f:04:fa:7b"
+    serial: "89900590"
+    ip: "169.254.20.1"
+    mikrotik_port: sfp28-3
+    current_container: thermal3
+    current_frame_id: thermal3_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:49Z"
+    confirmed_by: "user hand-wave test in foxglove"
+
+  blackfly_left:
+    model: "FLIR Blackfly S BFS-PGE-120S6C"
+    mac: "2c:dd:a3:7e:96:76"
+    serial: "25073270"
+    ip: "169.254.1.21"
+    mikrotik_port: sfp28-6
+    current_container: blackfly2
+    current_frame_id: blackfly2_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:48Z"
+    confirmed_by: "user hand-wave test in foxglove"
+
+  blackfly_right:
+    model: "FLIR Blackfly S BFS-PGE-120S6C"
+    mac: "2c:dd:a3:7e:96:75"
+    serial: "25073269"
+    ip: "169.254.1.20"
+    mikrotik_port: sfp28-5
+    current_container: blackfly1
+    current_frame_id: blackfly1_optical_frame
+    confirmed: true
+    confirmed_at: "2026-04-18T19:48Z"
+    confirmed_by: "user hand-wave test in foxglove"

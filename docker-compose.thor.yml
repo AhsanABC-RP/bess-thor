@@ -445,6 +445,43 @@ services:
     profiles: [lucid, rgb, sensors, dev, full]
 
   # ===========================================================================
+  # SENSORS - Stereolabs ZED 2i (RGB-D + IMU)
+  # Arena/Spinnaker peers are GigE; ZED is USB 3.x. Kept on its own in the
+  # launcher (no concurrent-SDK hazard here — Stereolabs SDK doesn't collide
+  # with Arena/Spinnaker discovery) but has its own CUDA depth pipeline which
+  # competes with fast-lio/dlio for the GPU when the full stack is up.
+  #
+  # Profile is `zed` only until topics verify (task #37). Once stable, add
+  # `sensors`/`full` and a compress sidecar.
+  # ===========================================================================
+  zed:
+    <<: *common
+    image: localhost/bess-zed:jazzy
+    container_name: zed
+    mem_limit: 8g
+    memswap_limit: 8g
+    volumes:
+      - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
+      - ./config/fastrtps.xml:/config/fastrtps.xml:ro
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/jazzy/setup.bash
+        source /ros2_ws/install/setup.bash
+        while true; do
+          echo "[zed] Starting ZED 2i wrapper..."
+          ros2 launch zed_wrapper zed_camera.launch.py \
+            camera_model:=zed2i \
+            namespace:=zed \
+            camera_name:=zed || true
+          echo "[zed] wrapper exited, restarting in 10s..."
+          sleep 10
+        done
+    profiles:
+      - zed
+
+  # ===========================================================================
   # SENSORS - Blackfly S (via Spinnaker)
   # ===========================================================================
   blackfly1:
@@ -757,6 +794,33 @@ services:
       - viz
       - dev
       - full
+
+  # Lichtblick Suite web UI (Foxglove Studio community fork) served as a
+  # static bundle over plain HTTP on :8080. Needed because Safari on iPad
+  # blocks mixed content — loading app.foxglove.dev (HTTPS) and then
+  # connecting to ws://192.168.1.209:8766 is blocked by the browser.
+  # Serving the UI over http://192.168.1.209:8080 from the same origin
+  # keeps the page+WebSocket on the same (plain) scheme so the iPad can
+  # connect to the local 8766 bridge without TLS/Tailscale.
+  # The bundle at containers/lichtblick-web/dist/ is the arch-independent
+  # lichtblick-web.tar.gz v1.24.3 from github.com/lichtblick-suite/lichtblick
+  # (container image is amd64-only, bundle works on arm64).
+  foxglove-web:
+    image: nginx:alpine
+    container_name: foxglove-web
+    network_mode: host
+    volumes:
+      - ./containers/lichtblick-web/dist:/usr/share/nginx/html:ro
+      - ./containers/lichtblick-web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/index.html"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    profiles:
+      - viz
+      - full
+    restart: "no"
 
   # ===========================================================================
   # SLAM (from original compose - kept for reference)

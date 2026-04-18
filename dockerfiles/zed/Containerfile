@@ -1,0 +1,80 @@
+# BESS ZED 2i Camera Driver Container
+# Stereolabs ZED SDK 5.2.3 + zed-ros2-wrapper master (ROS 2 Jazzy)
+# Build: docker build -t localhost/bess-zed:jazzy -f Containerfile .
+#
+# Stereolabs does NOT publish r38.x Docker Hub tags (only r36.3/r36.4) so we
+# build from the .run installer. The installer is copied from build context;
+# place the matching ZED_SDK_Tegra_L4T38.2_v5.2.3.zstd.run next to this file
+# before building.
+
+FROM localhost/bess-base:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ZED SDK runtime dependencies.
+RUN apt-get update && apt-get install -y \
+    libusb-1.0-0-dev \
+    libhidapi-libusb0 \
+    libhidapi-hidraw0 \
+    libturbojpeg \
+    libturbojpeg0-dev \
+    libjpeg-turbo8 \
+    libopenblas-dev \
+    zstd \
+    udev \
+    v4l-utils \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Fake Jetson release marker so the ZED installer accepts this target.
+# At container runtime, `runtime: nvidia` bind-mounts the real tegra userspace
+# from the host; this file is only needed for install-time target detection.
+RUN printf '# R38 (release), REVISION: 2.0, GCID: 00000, BOARD: t264ref, EABI: aarch64, DATE: Mon Jan 1 00:00:00 UTC 2026\n' > /etc/nv_tegra_release
+
+# Install ZED SDK. --accept auto-agrees to EULA; silent skips prompts; skip_cuda
+# reuses the base image's CUDA 13 install; skip_drivers skips kernel modules
+# (container shares host kernel); skip_od_module skips the 4+ GB AI download.
+COPY ZED_SDK_Tegra_L4T38.2_v5.2.3.zstd.run /tmp/zed_sdk.run
+RUN chmod +x /tmp/zed_sdk.run && \
+    /tmp/zed_sdk.run --accept -- silent skip_cuda skip_drivers skip_od_module && \
+    rm -f /tmp/zed_sdk.run && \
+    rm -f /etc/sysctl.d/60-zed-buffers.conf
+
+# Clone zed-ros2-interfaces (msg/srv) + zed-ros2-wrapper (driver node). Master
+# branches support Jazzy per Stereolabs docs as of 2026-01.
+WORKDIR /ros2_ws/src
+RUN git clone --depth 1 https://github.com/stereolabs/zed-ros2-interfaces.git && \
+    git clone --depth 1 --recurse-submodules https://github.com/stereolabs/zed-ros2-wrapper.git
+
+# Pull missing ROS deps.
+WORKDIR /ros2_ws
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    apt-get update && \
+    rosdep install --from-paths src --ignore-src -r -y --rosdistro=jazzy && \
+    rm -rf /var/lib/apt/lists/*"
+
+# Build the workspace (Release, parallelism capped to avoid OOM on 16 GB mem_limit).
+# --packages-skip zed_debug: diagnostic CLI tool, not required to run the wrapper,
+#   and its zed_debug_proc executable hard-links libsl_zed.so whose undefined refs
+#   (cuCtx*, NvBufSurf*, EGLStream::*, Argus::*, gl*) can't be resolved at build
+#   time — those libs are bind-mounted at runtime by `runtime: nvidia`, absent
+#   here. Shared libs tolerate unresolved refs (zed_components links fine);
+#   executables don't.
+# --allow-shlib-undefined: lets executables (zed_wrapper/ZED component node
+#   container) link against libsl_zed.so even though its .so deps aren't present
+#   at build time. Symbols resolve at dlopen time via nvidia-container bind mount.
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    MAKEFLAGS='-j4' colcon build --symlink-install \
+        --packages-skip zed_debug \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release \
+                     -DCMAKE_EXE_LINKER_FLAGS='-Wl,--allow-shlib-undefined' \
+                     -DCMAKE_SHARED_LINKER_FLAGS='-Wl,--allow-shlib-undefined' \
+        --executor sequential"
+
+ENV ROS_DOMAIN_ID=0
+
+# Default command: launch ZED 2i wrapper. Override camera_model at runtime for
+# other ZED variants (zed, zedm, zed2, zedx, zedxm, etc.).
+CMD ["/bin/bash", "-c", \
+     "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && \
+      ros2 launch zed_wrapper zed_camera.launch.py camera_model:=zed2i"]

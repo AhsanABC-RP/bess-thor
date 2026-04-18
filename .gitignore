@@ -3,3 +3,18 @@ data/
 *.pyc
 __pycache__/
 dockerfiles/thermal/spinnaker-debs/
+dockerfiles/zed/ZED_SDK_*.run
+
+# Conversation transcripts (sensitive, local only)
+conv*.txt
+
+# Empty or local-only work dirs
+logs/
+
+# Lichtblick web artifacts — fetched from github.com/lichtblick-suite releases
+# (dist/ is 174 MB extracted, tar.gz is 39 MB — too large to commit, redundant)
+containers/lichtblick-web/dist/
+containers/lichtblick-web/lichtblick-web*.tar.gz
+
+# Contains MikroTik admin password — do not commit. Use env vars in replacement.
+scripts/mikrotik_sfp_sweep.sh
