@@ -738,6 +738,13 @@ def main():
         if (cloud_already_world and args.odom_bag_dir) else files
     cloud_files = [f for f in cloud_files if os.path.getsize(f) > 0]
 
+    # STATIC fallback: if DLIO's waitUntilMove=true holds keyframe emission,
+    # /dlio/odom_node/deskewed is silent for the whole bag and cloud_files
+    # yields 0 scans. Drop back to raw Ouster SLERP-deskew on args.bag_dir so
+    # the LAS still reflects the pose stream (which is valid — IMU integrated,
+    # ~0 m cumul drift) instead of failing out.
+    fallback_raw_tried = False
+
     for fi, f in enumerate(cloud_files):
         with open(f, "rb") as fh:
             reader = make_reader(fh, decoder_factories=[DecoderFactory()])
@@ -815,6 +822,62 @@ def main():
         elapsed = time.time() - t0
         rate = total_scans / elapsed if elapsed > 0 else 0
         print(f"  File {fi+1}/{len(cloud_files)}: {total_scans} scans, {total_points:,} pts, {rate:.1f} scans/s")
+
+    if total_points == 0 and cloud_already_world and not fallback_raw_tried and files:
+        print(f"\n  WARN: SLAM-deskewed topic {args.cloud_topic} yielded 0 scans.")
+        print(f"  Likely STATIC segment — DLIO waitUntilMove=true freezes keyframe")
+        print(f"  emission on no-motion bags. Falling back to raw Ouster SLERP-deskew")
+        print(f"  via --bag-dir so LAS still reflects the pose stream.\n")
+        fallback_raw_tried = True
+        cloud_already_world = False
+        cloud_files = files
+        t0 = time.time()
+        for fi, f in enumerate(cloud_files):
+            with open(f, "rb") as fh:
+                reader = make_reader(fh, decoder_factories=[DecoderFactory()])
+                for _, channel, message, decoded in reader.iter_decoded_messages(topics=["/ouster/points"]):
+                    ts_scan = decoded.header.stamp.sec * 10**9 + decoded.header.stamp.nanosec
+                    if interpolate_pose(poses, ts_scan) is None:
+                        continue
+                    cloud = parse_ouster_cloud(decoded, args.min_range, args.max_range)
+                    if len(cloud['xyz']) == 0:
+                        continue
+                    t_abs = ts_scan + cloud['t'].astype(np.int64)
+                    t_min = int(t_abs.min())
+                    t_max = int(t_abs.max())
+                    xyz_map = np.empty_like(cloud['xyz'])
+                    if t_max == t_min:
+                        T_world_lidar = interpolate_pose(poses, t_min) @ T_body_lidar
+                        xyz_map = transform_points(cloud['xyz'], T_world_lidar)
+                    else:
+                        bin_edges = np.linspace(t_min, t_max, N_BINS + 1)
+                        bin_idx = np.clip(
+                            np.searchsorted(bin_edges, t_abs, side='right') - 1,
+                            0, N_BINS - 1,
+                        )
+                        for b in range(N_BINS):
+                            mask = bin_idx == b
+                            if not mask.any():
+                                continue
+                            t_bin = int(0.5 * (bin_edges[b] + bin_edges[b + 1]))
+                            T_world_body = interpolate_pose(poses, t_bin)
+                            if T_world_body is None:
+                                T_world_body = interpolate_pose(poses, ts_scan)
+                            T_world_lidar = T_world_body @ T_body_lidar
+                            xyz_map[mask] = transform_points(cloud['xyz'][mask], T_world_lidar)
+                    all_xyz.append(xyz_map)
+                    all_intensity.append(cloud['intensity'])
+                    all_reflectivity.append(cloud['reflectivity'])
+                    all_ring.append(cloud['ring'])
+                    all_ambient.append(cloud['ambient'])
+                    all_range.append(cloud['range_m'])
+                    rel_time = (ts_scan - poses[0][0]) / 1e9
+                    all_gps_time.append(np.full(len(xyz_map), rel_time, dtype=np.float64))
+                    total_scans += 1
+                    total_points += len(xyz_map)
+            elapsed = time.time() - t0
+            rate = total_scans / elapsed if elapsed > 0 else 0
+            print(f"  [fallback] File {fi+1}/{len(cloud_files)}: {total_scans} scans, {total_points:,} pts, {rate:.1f} scans/s")
 
     if total_points == 0:
         print("ERROR: No points accumulated.")
