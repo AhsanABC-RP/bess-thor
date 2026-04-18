@@ -481,16 +481,35 @@ def write_las(output_path, all_points):
     print(f"  LAS written: {size_gb:.2f} GB")
 
 
-def write_copc(las_path, copc_path):
-    """Convert LAS to COPC."""
-    import copclib as copc
+PDAL_BIN = "/usr/local/bin/pdal"
 
-    print(f"  Converting to COPC: {copc_path}")
-    reader = copc.FileReader(las_path)
-    cfg = reader.copc_config
-    writer = copc.FileWriter(copc_path, cfg)
-    writer.close()
-    # Use PDAL if copclib direct doesn't work
+
+def write_copc(las_path, copc_path):
+    """Convert LAS → COPC via PDAL CLI.
+
+    copclib's FileWriter requires a source that's already COPC-ordered, so it
+    can't convert a plain LAS — use pdal translate. forward=all preserves LAS
+    VLRs/metadata; extra_dims=all preserves Ouster reflectivity/ambient/ring/t.
+    """
+    import subprocess
+
+    if not os.path.exists(PDAL_BIN):
+        raise FileNotFoundError(
+            f"pdal binary not at {PDAL_BIN} — install via micromamba/conda-forge"
+        )
+
+    print(f"  Converting to COPC via pdal: {copc_path}")
+    result = subprocess.run(
+        [PDAL_BIN, "translate", las_path, copc_path,
+         "--writers.copc.forward=all",
+         "--writers.copc.extra_dims=all"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"pdal translate failed ({result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
     size_gb = os.path.getsize(copc_path) / (1024**3)
     print(f"  COPC written: {size_gb:.2f} GB")
 
@@ -690,7 +709,6 @@ def main():
             write_copc(las_path, copc_path)
         except Exception as e:
             print(f"  COPC conversion failed: {e}")
-            print("  Install pdal CLI and run: pdal translate site_trial.las site_trial.copc.laz --writers.copc.forward=all")
 
     total_time = time.time() - t0
     print(f"\nDone in {total_time:.0f}s ({total_time/60:.1f} min)")
