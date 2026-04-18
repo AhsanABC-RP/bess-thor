@@ -83,32 +83,66 @@
     # --voxel 0.02) — gives 5x density without destabilizing the SLAM.
     odom/preprocessing/voxelFilter/res: 0.25
 
-    odom/keyframe/threshD: 1.0
+    # 2026-04-18 Round 3 — highway tune. Upstream params.yaml default is 1.0.
+    # At highway speed (20 m/s × 100 ms scan = 2 m/scan), threshD=1.0 forces a
+    # keyframe every ~50 ms — submap churns constantly, gicp_target_kdtree
+    # rebuilt every 2 scans per odom.cc:1600 + buildSubmap 1680-1768. Raising
+    # the floor to 2.5 m: adaptive=true still clamps up to 5 m on open road
+    # per setAdaptiveParams() odom.cc:1626-1650 (spaciousness-gated), so this
+    # sets only the suburban/transition band. Urban &lt;10 m/s still gets a
+    # keyframe every 250-500 ms (fine). DLIO paper benchmarks only
+    # handheld/drone — no vehicular config exists upstream (Issues #13, #32,
+    # #15). This is our own motorway tune.
+    odom/keyframe/threshD: 2.5
     odom/keyframe/threshR: 45.0
 
     # Upstream params.yaml defaults are 10/10/10. Halving to 5/5/5 starves
     # the submap — GICP fits against too-few keyframes, converges to local
     # minima with no leverage to correct, cumul drift explodes. Contributor
     # to the 13 km divergence on 2026-04-17.
-    odom/submap/keyframe/knn: 10
+    #
+    # 2026-04-18 Round 3 — highway tune. With threshD=2.5 m above, knn=10
+    # gives only ~25 m of backward submap reach = 1.25 s of highway motion.
+    # GICP needs distant planar features (road signs, buildings past you) as
+    # anchor points that scan-to-submap can lever at speed. Raise knn 10→15
+    # so submap covers &gt;3 s of highway motion. kcv/kcc stay at 10 — they're
+    # hull-coverage dimensions, not reach.
+    odom/submap/keyframe/knn: 15
     odom/submap/keyframe/kcv: 10
     odom/submap/keyframe/kcc: 10
     odom/gicp/minNumPoints: 64
     odom/gicp/kCorrespondences: 16
-    # Tightened 0.5 -> 0.25. With voxelFilter/res 0.25 above, 0.5 m allowed
-    # GICP correspondence matches across 2x2 voxel neighborhoods in sparse
-    # or degenerate geometry (featureless hallway, open field) → converges
-    # to local minima ~0.5 m off per scan. 0.25 m (~1 voxel width) keeps
-    # correspondences high-confidence. DLIO does NOT skip bad registrations
-    # per odom.cc getNextPose(), so this is the primary robustness knob.
-    odom/gicp/maxCorrespondenceDistance: 0.25
-    odom/gicp/maxIterations: 32
+    # 2026-04-18 Round 3 — highway tune. Tightened 0.5 → 0.25 in Round 2 for
+    # urban-structure robustness. adaptive=true doubles this to 2× on open
+    # road (spaciousness ≥5 m per odom.cc:1639-1643) and halves to 0.5× in
+    # tight urban (&lt;5 m spaciousness). Previous 0.25 → urban 0.125 (too
+    # tight for 131k pts/scan at highway entry/exit transitions) and highway
+    # 0.50 (fine but no headroom). Raise base 0.25 → 0.30: urban 0.15,
+    # highway 0.60 — gives GICP actual planar structure to lock onto at both
+    # ends of the speed range.
+    odom/gicp/maxCorrespondenceDistance: 0.30
+    # 2026-04-18 Round 3 — highway tune. maxIterations 32 is overkill when
+    # IMU prior from continuous-time integration (odom.cc:1159-1253) is good.
+    # At highway speed per-scan residuals are larger AND the solution surface
+    # is noisier (fewer near features) — dropping to 24 reduces the chance
+    # of locking onto a local minimum during fast-motion ambiguity. Keeps
+    # urban fine (converges in &lt;10 iters typically per runtime profiling).
+    odom/gicp/maxIterations: 24
     odom/gicp/transformationEpsilon: 0.01
     odom/gicp/rotationEpsilon: 0.01
     odom/gicp/initLambdaFactor: 1e-9
 
     odom/geo/Kp: 4.5
-    odom/geo/Kv: 11.25
+    # 2026-04-18 Round 3 — highway tune. Geometric observer updateState()
+    # at odom.cc:1312-1370 applies per-scan correction with dt = 100 ms.
+    # At Kv=11.25, a 0.1 m/scan GICP position err gets projected as 1.125 ×
+    # err velocity kick. On highway at 20 m/s this is &gt;5% of true velocity
+    # per scan — velocity jitter inherits GICP noise, pose stream wobbles,
+    # map stacks. Drop Kv 11.25 → 6.0: LiDAR still drives velocity
+    # correction, but IMU-predicted velocity survives a scan cycle. Kp
+    # unchanged so position still tracks LiDAR hard. Equivalent spirit to
+    # FAST-LIO2 2026-04-18 acc/gyr_cov loosen for MEMS IMU noise.
+    odom/geo/Kv: 6.0
     odom/geo/Kq: 4.0
     odom/geo/Kab: 2.25
     odom/geo/Kgb: 1.0
