@@ -208,11 +208,17 @@ def generate_launch_description():
         # Provides place recognition for loop closure
         # Input: /fast_lio/cloud_registered, /fast_lio/odometry
         # Output: /fast_lio/loop_closure, /fast_lio/keyframes
-        ExecuteProcess(
+        #
+        # Gated by ENABLE_SCANCONTEXT env var (default: "1"). Set to "0" for
+        # offline replays on site-trial bags where the vehicle is stationary
+        # at both ends — FAST-LIO2 odom drifts slightly while stationary,
+        # producing spurious keyframes that all alias to the first stationary
+        # keyframe and swamp the log with zero-distance false positives.
+        *([ExecuteProcess(
             cmd=['python3', '/ros2_ws/scancontext_node.py'],
             name='scancontext_loop_closure',
             output='screen',
-        ),
+        )] if os.environ.get('ENABLE_SCANCONTEXT', '1') == '1' else []),
 
         # ----------------------------------------------------------------------
         # camera_init -> body TF re-broadcaster @ 50 Hz (stamp = now())

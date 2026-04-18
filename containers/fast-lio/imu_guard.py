@@ -41,11 +41,16 @@ class ImuGuard(Node):
         self.declare_parameter('output_topic', '/imu/data_guarded')
         self.declare_parameter('min_increment_ns', 2_000_000)  # 2ms minimum between samples
         self.declare_parameter('warn_interval', 100)  # Log every N corrections
+        # Input QoS: 'reliable' for GQ7 (/imu/data), 'best_effort' for
+        # Ouster BMI085 (/ouster/imu) — offline bag replay also publishes
+        # BEST_EFFORT on /ouster/imu. Wrong reliability = silent drop.
+        self.declare_parameter('reliability', 'reliable')
 
         self.input_topic = self.get_parameter('input_topic').value
         self.output_topic = self.get_parameter('output_topic').value
         self.min_increment_ns = self.get_parameter('min_increment_ns').value
         self.warn_interval = self.get_parameter('warn_interval').value
+        self.reliability = self.get_parameter('reliability').value.lower()
 
         # State
         self.last_raw_ns = 0       # Last raw input timestamp
@@ -62,7 +67,15 @@ class ImuGuard(Node):
         # Large jumps (>1s) = GPS time acquisition/loss, source switch
         self.large_jump_thresh_ns = 1_000_000_000  # 1 second
 
-        # QoS for high-rate IMU - use RELIABLE to match FAST-LIO expectations
+        # Input QoS must match publisher reliability or messages silently drop.
+        # Output stays RELIABLE for FAST-LIO expectations.
+        in_rel = (ReliabilityPolicy.BEST_EFFORT if self.reliability == 'best_effort'
+                  else ReliabilityPolicy.RELIABLE)
+        in_qos = QoSProfile(
+            reliability=in_rel,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=100
+        )
         imu_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
@@ -74,7 +87,7 @@ class ImuGuard(Node):
             Imu,
             self.input_topic,
             self.imu_callback,
-            imu_qos
+            in_qos
         )
 
         self.pub = self.create_publisher(

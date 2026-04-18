@@ -1,41 +1,27 @@
-# BESS FAST-LIO2 Config — Thor (Ouster OS1-128 + MicroStrain GQ7)
-# Ericsii ROS 2 port expects nested (common/preprocess/mapping/publish)
-# sections — a flat layout silently falls back to Livox defaults and segfaults
-# on Ouster PointCloud2 msgs. See FAST_LIO/config/ouster64.yaml for the
-# upstream reference this is derived from.
+# BESS FAST-LIO2 Config — OFFLINE reprocessing
+# Based on Grey/White proven parameters (filter=0.5, cube=500, pfilt=2).
+# Ouster BMI085 IMU must be routed through ouster_imu_guard.py first —
+# raw /ouster/imu has backwards timestamps up to ~11ms which exceed
+# FAST-LIO2's 10ms tolerance and crash the EKF.
 
 /**:
   ros__parameters:
     feature_extract_enable: false
-    # Upstream Ericsii ouster64.yaml default is 3 — every Nth point kept
-    # during per-scan downsampling. Was 1 (all 131k pts/scan) which pushed
-    # the iEKF past the 100 ms scan period — sync_packages() timed out and
-    # alternate scans were dropped, pulling /fast_lio/odometry down to
-    # ~5 Hz. Restoring 3 drops per-scan load to ~44k pts and keeps iEKF
-    # inside the scan period at 10 Hz.
+    # Highway-tuned (2026-04-17): point_filter_num 2→3 to stay under 40 ms/scan
+    # at 10 Hz so iEKF doesn't fall behind when CPU is shared (e.g. live stack
+    # still running). At ~20 m/s the per-scan relative motion is ~2 m, which
+    # well-bounded by 5 iEKF iterations against 0.5 m voxels.
     point_filter_num: 3
-    # max_iteration was bumped 3 -> 4 in an earlier pass for extra iEKF
-    # refinement. Keep at 4: upstream is 3, our bump gives a small stability
-    # margin on highway motion, cost ~+25% per scan which we can afford now
-    # that point_filter_num=3 cut the per-iteration point count ~3x.
-    max_iteration: 4
-    # Back to upstream ouster64.yaml values after the 0.2/0.15 attempt
-    # triggered `pcl::VoxelGrid::applyFilter Leaf size is too small for the
-    # input dataset. Integer indices would overflow` in fastlio_mapping:
-    # with cube_side_length = 1000 m, (1000/0.15)^3 ≈ 3e11 voxels, which
-    # blows past int32 max (~2.1e9). PCL VoxelGrid bails → effective_feat
-    # = 0 → "No Effective Points!" every scan → /fast_lio/odometry silent
-    # while DLIO (different downsampler, unaffected) ran normally at 99 Hz.
-    # The "crisp edge" argument for going finer was valid on a bounded
-    # per-scan cloud but ignored the map-side ikd-tree voxelization which
-    # bounds to the full local submap. Keep 0.5 / 0.5 until we either lower
-    # cube_side_length (FAST-LIO2 indoor default is 200) or move to a
-    # bounded-grid reimplementation of the map downsample.
+    max_iteration: 5
+    # Highway map bound: cube 800 gives ~40 s of driving at 20 m/s before pts
+    # drop from local map. (800/0.5)^3 = 4.1e9 — exceeds int32, but in practice
+    # the map BBOX is bounded by det_range (150 m) not cube, so PCL VoxelGrid
+    # index never hits (1600)^3. Do NOT lower filter_size_map below 0.5.
     filter_size_surf: 0.5
     filter_size_map: 0.5
-    cube_side_length: 1000.0
+    cube_side_length: 800.0
     runtime_pos_log_enable: false
-    map_file_path: "/tmp/fast_lio.pcd"
+    map_file_path: "/output/fast_lio_map.pcd"
 
     common:
       lid_topic: "/ouster/points"
@@ -43,7 +29,7 @@
       # /imu/data_guarded (GQ7) is on system wall time, which does NOT match
       # Ouster's PTP clock (currently ~318 days stale with no PTP master).
       # DLIO uses /ouster/imu for the same reason. Revisit once PTP is synced.
-      imu_topic: "/ouster/imu"
+      imu_topic: "/ouster/imu_guarded"
       time_sync_en: false
       time_offset_lidar_to_imu: 0.0
 
@@ -98,5 +84,5 @@
       map_en: false
 
     pcd_save:
-      pcd_save_en: false
+      pcd_save_en: true
       interval: -1
