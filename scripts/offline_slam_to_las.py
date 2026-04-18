@@ -49,6 +49,11 @@ def parse_args():
                    help="Override 3x3 rotation body<-lidar (row-major, 9 floats)")
     p.add_argument("--extrinsic-T", type=float, nargs=3, default=None,
                    help="Override 3x1 translation body<-lidar (3 floats, meters)")
+    p.add_argument("--deskew-bins", type=int, default=64,
+                   help="Number of time buckets per 100 ms scan for per-point "
+                        "de-skew (default 64 → ~1.5 ms bucket → ~2 cm residual "
+                        "at 15 m/s peak; 16 → 6 ms bucket → 9 cm residual, "
+                        "visible as lamp-post/thin-vertical ghosting).")
     return p.parse_args()
 
 
@@ -142,8 +147,51 @@ def load_odometry(files, odom_topic):
                 print(f"  Stream stopped early at {len(poses)} poses in {os.path.basename(f)}: {e}")
     poses.sort(key=lambda x: x[0])
     print(f"  Loaded {len(poses)} odometry poses")
+    poses = _decimate_burst_poses(poses)
     _audit_poses(poses)
     return poses
+
+
+def _decimate_burst_poses(poses, min_dt_ms=5.0):
+    """Drop back-to-back pose samples within min_dt_ms — keep the latest.
+
+    DLIO publishes the geometric-observer state at its IMU callback rate
+    (~117 Hz) with bursts where consecutive samples land 1-4 ms apart right
+    after a GICP correction. The samples are individually correct (each is
+    the up-to-the-microsecond state), but SLERPing between two samples that
+    differ by 0.5-1 deg in 1-4 ms produces an interpolated rotation-rate
+    of 100-700 deg/s — far above any car's physical turn rate. 16-bin
+    per-point deskew lands bin centers at ~6 ms intervals, so adjacent
+    bins can draw from opposite sides of a burst and end up 0.5 deg
+    rotated relative to each other — the visible LAS 'rotation snap' in
+    spite of a clean DLIO MCAP (Foxglove shows keyframe clouds at their
+    scan-time pose, no interpolation between state updates, so the bursts
+    are invisible in viz).
+
+    Keeping the LATEST sample in each min_dt_ms window preserves the
+    most-corrected state (after GICP has pulled the IMU-propagated state
+    back onto the scan measurement) while guaranteeing SLERP always
+    operates on stable >=5 ms intervals.
+
+    Observed on 2026-04-18 drive1 DLIO run: 16,310 raw poses → ~10,000 after
+    decimation; 61 rotation spikes >100 deg/s → 0 in decimated stream.
+    FAST-LIO2 at 10 Hz is unaffected (all dt >=100 ms, nothing to drop)."""
+    if len(poses) < 2:
+        return poses
+    min_dt_ns = int(min_dt_ms * 1e6)
+    out = [poses[0]]
+    dropped = 0
+    for ts, T in poses[1:]:
+        prev_ts, _ = out[-1]
+        if ts - prev_ts < min_dt_ns:
+            out[-1] = (ts, T)  # replace with later sample
+            dropped += 1
+        else:
+            out.append((ts, T))
+    if dropped > 0:
+        print(f"  Burst-decimated {dropped} poses within {min_dt_ms:.1f} ms "
+              f"of their predecessor ({len(poses)} → {len(out)})")
+    return out
 
 
 def _audit_poses(poses, max_speed_mps=30.0, max_extent_m=2000.0):
@@ -306,6 +354,41 @@ def parse_ouster_cloud(decoded, min_range, max_range):
     }
 
 
+def parse_dlio_deskewed_cloud(decoded):
+    """Parse DLIO /dlio/odom_node/pointcloud/deskewed — already in world frame.
+
+    Fields: x f32 @0, y f32 @4, z f32 @8, intensity f32 @16, t f32 @24, ...
+    DLIO's PointType is pcl::PointXYZI plus Ouster time variants. We only
+    need xyz + intensity — the cloud is already transformed to the `dlio_odom`
+    frame by DLIO's deskewPointcloud() using the full IMU-integrated pose
+    (not snapshot-interpolated), so no pose lookup or extrinsic is needed."""
+    fields = {f.name: f.offset for f in decoded.fields}
+    step = decoded.point_step
+    data = bytes(decoded.data)
+    n = decoded.width * decoded.height
+    if n == 0:
+        return None
+
+    arr = np.frombuffer(data, dtype=np.uint8).reshape(n, step)
+    ox, oy, oz = fields['x'], fields['y'], fields['z']
+    oi = fields.get('intensity', ox)  # fallback — always defined on DLIO cloud
+    xyz = np.empty((n, 3), dtype=np.float32)
+    xyz[:, 0] = np.frombuffer(arr[:, ox:ox+4].tobytes(), dtype='<f4')
+    xyz[:, 1] = np.frombuffer(arr[:, oy:oy+4].tobytes(), dtype='<f4')
+    xyz[:, 2] = np.frombuffer(arr[:, oz:oz+4].tobytes(), dtype='<f4')
+    intensity = np.frombuffer(arr[:, oi:oi+4].tobytes(), dtype='<f4').copy()
+    mask = np.isfinite(xyz).all(axis=1)
+    return {
+        'xyz': xyz[mask],
+        'intensity': intensity[mask],
+        'reflectivity': np.zeros(int(mask.sum()), dtype=np.uint16),
+        'ring': np.zeros(int(mask.sum()), dtype=np.uint16),
+        'ambient': np.zeros(int(mask.sum()), dtype=np.uint16),
+        'range_m': np.linalg.norm(xyz[mask], axis=1).astype(np.float32),
+        't': np.zeros(int(mask.sum()), dtype=np.uint32),
+    }
+
+
 def transform_points(xyz, T):
     """Apply 4x4 transform to Nx3 points."""
     ones = np.ones((xyz.shape[0], 1), dtype=np.float32)
@@ -437,11 +520,21 @@ def main():
         sys.exit(1)
 
     # Step 2: Transform raw clouds using interpolated poses
+    # If cloud topic is a SLAM-deskewed stream (already in world frame), skip
+    # our own deskew + extrinsic — consume DLIO's internal deskewPointcloud()
+    # output directly. DLIO integrates IMU continuously inside each 100 ms scan
+    # to deskew, so the result is far more faithful than SLERPing the published
+    # pose stream across scan-internal time bins.
+    cloud_already_world = "deskewed" in args.cloud_topic
     T_body_lidar = build_body_lidar_extrinsic(args)
-    print(f"\n[2/3] Transforming raw Ouster clouds (range {args.min_range}-{args.max_range}m)...")
-    print(f"  Extrinsic preset: {args.extrinsic_preset}")
-    print(f"  T_body_lidar R:\n    {T_body_lidar[0,:3]}\n    {T_body_lidar[1,:3]}\n    {T_body_lidar[2,:3]}")
-    print(f"  T_body_lidar t: {T_body_lidar[:3,3]}")
+    if cloud_already_world:
+        print(f"\n[2/3] Concatenating SLAM-deskewed clouds from {args.cloud_topic} "
+              f"(already in world frame — skipping exporter deskew + extrinsic)...")
+    else:
+        print(f"\n[2/3] Transforming raw Ouster clouds (range {args.min_range}-{args.max_range}m)...")
+        print(f"  Extrinsic preset: {args.extrinsic_preset}")
+        print(f"  T_body_lidar R:\n    {T_body_lidar[0,:3]}\n    {T_body_lidar[1,:3]}\n    {T_body_lidar[2,:3]}")
+        print(f"  T_body_lidar t: {T_body_lidar[:3,3]}")
     all_xyz = []
     all_intensity = []
     all_reflectivity = []
@@ -454,57 +547,74 @@ def main():
     total_scans = 0
     t0 = time.time()
 
-    N_BINS = 16
+    N_BINS = args.deskew_bins
 
-    for fi, f in enumerate(files):
+    # If cloud_already_world, we read from the SLAM-deskewed bag (not the
+    # raw-Ouster bag). Use odom_files if available — those are the bags
+    # containing the SLAM output topics.
+    cloud_files = sorted(glob.glob(os.path.join(args.odom_bag_dir, "*.mcap"))) \
+        if (cloud_already_world and args.odom_bag_dir) else files
+    cloud_files = [f for f in cloud_files if os.path.getsize(f) > 0]
+
+    for fi, f in enumerate(cloud_files):
         with open(f, "rb") as fh:
             reader = make_reader(fh, decoder_factories=[DecoderFactory()])
             for _, channel, message, decoded in reader.iter_decoded_messages(topics=[args.cloud_topic]):
                 ts_scan = decoded.header.stamp.sec * 10**9 + decoded.header.stamp.nanosec
-                # Sanity-check the pose stream covers the scan stamp; if the
-                # whole scan is outside pose coverage, skip it.
-                if interpolate_pose(poses, ts_scan) is None:
-                    continue
 
-                cloud = parse_ouster_cloud(decoded, args.min_range, args.max_range)
-                if len(cloud['xyz']) == 0:
-                    continue
-
-                # Per-point de-skew. The Ouster driver fills `t` with ns
-                # offsets from the scan header stamp (0 .. ~100 ms). Applying
-                # a single pose to the full 131k-pt scan smears 0.5-2 m of
-                # wall-thickening per scan at drive speeds — baked into the
-                # LAS independent of SLAM quality. Bucket the scan into
-                # N_BINS time windows, SLERP the body pose per bin, transform
-                # each bin's points with its own T_world_lidar.
-                t_abs = ts_scan + cloud['t'].astype(np.int64)
-                # Use np.linspace(min, max, N+1). If the scan has zero time
-                # span (all points at same t), edges collapse and all points
-                # fall in bin 0 — fall through to single-pose path.
-                t_min = int(t_abs.min())
-                t_max = int(t_abs.max())
-                xyz_map = np.empty_like(cloud['xyz'])
-                if t_max == t_min:
-                    T_world_lidar = interpolate_pose(poses, t_min) @ T_body_lidar
-                    xyz_map = transform_points(cloud['xyz'], T_world_lidar)
+                if cloud_already_world:
+                    # DLIO/FAST-LIO2 deskewed topic — already in world frame,
+                    # deskewed per-point by SLAM's IMU-integrated continuous
+                    # pose. No exporter deskew or extrinsic needed.
+                    cloud = parse_dlio_deskewed_cloud(decoded)
+                    if cloud is None or len(cloud['xyz']) == 0:
+                        continue
+                    xyz_map = cloud['xyz']
                 else:
-                    bin_edges = np.linspace(t_min, t_max, N_BINS + 1)
-                    bin_idx = np.clip(
-                        np.searchsorted(bin_edges, t_abs, side='right') - 1,
-                        0, N_BINS - 1,
-                    )
-                    for b in range(N_BINS):
-                        mask = bin_idx == b
-                        if not mask.any():
-                            continue
-                        t_bin = int(0.5 * (bin_edges[b] + bin_edges[b + 1]))
-                        T_world_body = interpolate_pose(poses, t_bin)
-                        if T_world_body is None:
-                            # Out of pose range (edge of bag); fall back to
-                            # scan-stamp pose rather than dropping points.
-                            T_world_body = interpolate_pose(poses, ts_scan)
-                        T_world_lidar = T_world_body @ T_body_lidar
-                        xyz_map[mask] = transform_points(cloud['xyz'][mask], T_world_lidar)
+                    # Sanity-check the pose stream covers the scan stamp; if the
+                    # whole scan is outside pose coverage, skip it.
+                    if interpolate_pose(poses, ts_scan) is None:
+                        continue
+
+                    cloud = parse_ouster_cloud(decoded, args.min_range, args.max_range)
+                    if len(cloud['xyz']) == 0:
+                        continue
+
+                    # Per-point de-skew. The Ouster driver fills `t` with ns
+                    # offsets from the scan header stamp (0 .. ~100 ms). Applying
+                    # a single pose to the full 131k-pt scan smears 0.5-2 m of
+                    # wall-thickening per scan at drive speeds — baked into the
+                    # LAS independent of SLAM quality. Bucket the scan into
+                    # N_BINS time windows, SLERP the body pose per bin, transform
+                    # each bin's points with its own T_world_lidar.
+                    t_abs = ts_scan + cloud['t'].astype(np.int64)
+                    # Use np.linspace(min, max, N+1). If the scan has zero time
+                    # span (all points at same t), edges collapse and all points
+                    # fall in bin 0 — fall through to single-pose path.
+                    t_min = int(t_abs.min())
+                    t_max = int(t_abs.max())
+                    xyz_map = np.empty_like(cloud['xyz'])
+                    if t_max == t_min:
+                        T_world_lidar = interpolate_pose(poses, t_min) @ T_body_lidar
+                        xyz_map = transform_points(cloud['xyz'], T_world_lidar)
+                    else:
+                        bin_edges = np.linspace(t_min, t_max, N_BINS + 1)
+                        bin_idx = np.clip(
+                            np.searchsorted(bin_edges, t_abs, side='right') - 1,
+                            0, N_BINS - 1,
+                        )
+                        for b in range(N_BINS):
+                            mask = bin_idx == b
+                            if not mask.any():
+                                continue
+                            t_bin = int(0.5 * (bin_edges[b] + bin_edges[b + 1]))
+                            T_world_body = interpolate_pose(poses, t_bin)
+                            if T_world_body is None:
+                                # Out of pose range (edge of bag); fall back to
+                                # scan-stamp pose rather than dropping points.
+                                T_world_body = interpolate_pose(poses, ts_scan)
+                            T_world_lidar = T_world_body @ T_body_lidar
+                            xyz_map[mask] = transform_points(cloud['xyz'][mask], T_world_lidar)
 
                 all_xyz.append(xyz_map)
                 all_intensity.append(cloud['intensity'])
@@ -522,7 +632,7 @@ def main():
 
         elapsed = time.time() - t0
         rate = total_scans / elapsed if elapsed > 0 else 0
-        print(f"  File {fi+1}/{len(files)}: {total_scans} scans, {total_points:,} pts, {rate:.1f} scans/s")
+        print(f"  File {fi+1}/{len(cloud_files)}: {total_scans} scans, {total_points:,} pts, {rate:.1f} scans/s")
 
     if total_points == 0:
         print("ERROR: No points accumulated.")

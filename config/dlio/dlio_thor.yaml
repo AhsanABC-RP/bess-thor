@@ -26,7 +26,19 @@
     # the vehicle actually moves. Prevents stale keyframes from being placed
     # during the noisy IMU-calibration window at bag start.
     map/waitUntilMove: true
-    map/dense/filtered: true         # voxel-filter dense map — prevents unbounded RAM growth
+    # map/dense/filtered controls which cloud is PUBLISHED on /dlio/odom_node/
+    # pointcloud/deskewed — NOT DLIO's internal map accumulation. Upstream
+    # comment "voxel-filter dense map" is misleading.
+    # Per odom.cc:844-847: if true → publish `current_scan` (voxelized at
+    # odom/preprocessing/voxelFilter/res, i.e. 0.25 m — matches GICP input).
+    # If false → publish `deskewed_scan` (native density, ~131k pts/scan on
+    # OS1-128, deskewed by DLIO's continuous-IMU per-point-timestamp pass).
+    # GICP still runs on the voxelized current_scan either way, so SLAM
+    # stability is identical. Setting false gives LAS exports ~5x more points
+    # per scan with the same clean rotation/deskew DLIO renders in Foxglove.
+    # Offline rerun bandwidth: ~42 MB/s → ~5 GB over 137 s drive1. Fine on
+    # /mnt/bess-usb.
+    map/dense/filtered: false
     map/sparse/leafSize: 0.25
 
     odom/gravity: 9.80665
@@ -56,11 +68,19 @@
 
     odom/preprocessing/cropBoxFilter/size: 1.0
     # Upstream params.yaml default is 0.25. Previous value 0.10 was set for
-    # visual density in Foxglove (dot-matrix look from sparse voxelization),
-    # but stresses GICP past the scan budget on OS1-128 (131k pts/scan →
-    # ~80k post-filter at 0.10 vs ~25-30k at 0.25 — 2.5-3x more GICP work).
-    # Revert to upstream default; the "dot matrix" was cosmetic and the
-    # deskewed cloud is only for visualization anyway.
+    # visual density but stresses GICP past the scan budget on OS1-128
+    # (131k pts/scan → ~80k post-filter at 0.10 vs ~25-30k at 0.25).
+    #
+    # 2026-04-18 retry: attempted 0.25 → 0.10 for "native density". Same
+    # catastrophic divergence as the 2026-04-17 original: drive1 went from
+    # 561 m cumul (at 0.25) to 5404 m cumul (at 0.10), Z extent 6 m → 2315 m,
+    # max speed 16934 m/s. max_correspondence_distance 0.25 is too tight
+    # relative to 0.10 m voxels for GICP to find planar structure at highway
+    # speed; scan-to-scan registration converges to local minima every few
+    # scans and compounds. DO NOT drop voxelFilter/res below 0.25 on this
+    # rig without also retuning correspondence distance, knn, and max_iter.
+    # For denser output maps use LAS-side voxel (scripts/offline_slam_to_las.py
+    # --voxel 0.02) — gives 5x density without destabilizing the SLAM.
     odom/preprocessing/voxelFilter/res: 0.25
 
     odom/keyframe/threshD: 1.0
