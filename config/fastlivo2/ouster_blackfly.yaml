@@ -1,0 +1,82 @@
+# FAST-LIVO2 main config for Thor: Ouster OS1-128 + Blackfly S + /ouster/imu.
+# Extrinsic conventions (critical — wrong sign = divergence):
+#   extrinsic_T/R    = T_imu_lidar (lidar-in-IMU frame)   — Ouster BMI085 is inside sensor head, ~identity
+#   Rcl/Pcl          = T_cam_lidar (lidar-in-camera frame) — set from Kalibr cam-lidar extrinsic
+# Paired camera yaml: config/fastlivo2/camera_blackfly1.yaml
+
+common:
+    img_topic:  "/blackfly/camera1/blackfly_camera/image_raw"
+    lid_topic:  "/ouster/points"
+    imu_topic:  "/ouster/imu"
+    img_en:     1
+    lidar_en:   1
+    ros_driver_bug_fix: false  # our MCAP has clean PointCloud2 frames
+
+extrin_calib:
+    # T_imu_lidar — Ouster BMI085 is co-located with lidar in sensor head.
+    # Translation matches dlio_thor.yaml (sub-voxel).
+    extrinsic_T: [ -0.002441, -0.009725, 0.007533 ]
+    extrinsic_R: [ 1, 0, 0,
+                   0, 1, 0,
+                   0, 0, 1 ]
+    # T_cam_lidar — PLACEHOLDER identity until Kalibr cam-lidar calib lands.
+    # Blackfly1 is mounted ahead of and slightly above the Ouster. Update once
+    # we have a valid Kalibr raw-camchain + lidar extrinsic.
+    Rcl:        [ 0, -1,  0,
+                  0,  0, -1,
+                  1,  0,  0 ]
+    Pcl:        [ 0.10, 0.00, -0.05 ]
+
+time_offset:
+    # Ouster scan stamp = end-of-rotation; 100 ms scan → shift by -0.05 typical.
+    # NTU_VIRAL.yaml uses -0.1 which also works. Sweep ±50 ms if divergent.
+    lidar_time_offset: -0.05
+    imu_time_offset:    0.0
+    exposure_time_init: 0.0
+
+preprocess:
+    lidar_type:       3     # 3 = OUST64 (see include/common_lib.h)
+    scan_line:        128
+    blind:            1.0   # Ouster self-return up to ~0.8 m
+    point_filter_num: 3     # match our FAST-LIO2 offline
+    filter_size_surf: 0.5
+
+vio:
+    max_iterations:       5
+    outlier_threshold:    78.0
+    img_point_cov:        100.0
+    patch_size:           8
+    patch_pyrimid_level:  4
+    normal_en:            true
+    inverse_composition_en:   false
+    raycast_en:           false
+    exposure_estimate_en: true
+    inv_expo_cov:         0.1
+
+lio:
+    max_iterations:       5
+    dept_err:             0.02
+    beam_err:             0.05
+    min_eigen_value:      0.0025
+    voxel_size:           0.5
+    max_layer:            2
+    max_points_num:       50
+    layer_init_num:       [ 5, 5, 5, 5, 5 ]
+
+imu:
+    imu_en:              true
+    imu_int_frame:       30
+    acc_cov:             0.1
+    gyr_cov:             0.1
+    b_acc_cov:           0.0001
+    b_gyr_cov:           0.0001
+
+publish:
+    pub_plane_en:        false
+    dense_map_en:        true
+
+pcd_save:
+    pcd_save_en:         false
+    colmap_output_en:    false
+    filter_size_pcd:     0.1
+    interval:            -1

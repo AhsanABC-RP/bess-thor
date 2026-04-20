@@ -1,0 +1,64 @@
+# BESS FAST-LIVO2 Container — visual-inertial-lidar SLAM
+# Runs hku-mars/FAST-LIVO2 on Ouster OS1-128 + Blackfly/Lucid camera + /ouster/imu.
+# ROS 1 Noetic only (no ROS 2 port exists as of 2026-04-19).
+#
+# Build:
+#   docker build -t localhost/bess-fastlivo2:noetic \
+#     -f containers/fast-livo2/Containerfile containers/fast-livo2
+#
+# Hard deps (pinned — latest master breaks the build):
+#   - Sophus @ a621ff (non-templated) — README §2.3
+#   - rpg_vikit: xuankuzcr FORK, NOT upstream uzh-rpg — README §2.4
+#   - livox_ros_driver v1 (headers only, we use Ouster)
+#
+# Build-time: 15-25 min at -j4 on Thor. LIVMapper.cpp + vio.cpp each peak ~6 GB
+# RAM — don't -j$(nproc), you'll OOM.
+
+FROM arm64v8/ros:noetic-perception
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99-thor-clock-skew && \
+    echo 'Acquire::Check-Date "false";'        >> /etc/apt/apt.conf.d/99-thor-clock-skew && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git wget ca-certificates \
+        libeigen3-dev libpcl-dev libopencv-dev libboost-all-dev \
+        libyaml-cpp-dev libgoogle-glog-dev libgflags-dev libomp-dev \
+        ros-noetic-pcl-ros ros-noetic-cv-bridge ros-noetic-image-transport \
+        ros-noetic-tf ros-noetic-eigen-conversions \
+        python3-catkin-tools python3-pip \
+    && pip3 install --no-cache-dir rosbags \
+    && rm -rf /var/lib/apt/lists/*
+
+# Sophus pinned to commit a621ff (non-templated variant FAST-LIVO2 requires).
+# Patch: a621ff uses `unit_complex_.real() = X;` and `.imag() = X;` which GCC 9+
+# rejects as lvalue. Rewrite both to setter form `.real(X)` / `.imag(X)`.
+RUN git clone https://github.com/strasdat/Sophus.git /opt/Sophus && \
+    cd /opt/Sophus && git checkout a621ff && \
+    find sophus -name '*.cpp' -o -name '*.h' -o -name '*.hpp' | xargs sed -i \
+        -e 's|unit_complex_\.real() = \([^;]*\);|unit_complex_.real(\1);|g' \
+        -e 's|unit_complex_\.imag() = \([^;]*\);|unit_complex_.imag(\1);|g' && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-Wno-deprecated-declarations" && \
+    make -j4 && make install && \
+    ldconfig
+
+# Catkin workspace: vikit_fork + livox_ros_driver (v1 headers) + FAST-LIVO2.
+WORKDIR /catkin_ws/src
+RUN git clone https://github.com/xuankuzcr/rpg_vikit.git && \
+    git clone https://github.com/Livox-SDK/livox_ros_driver.git && \
+    git clone https://github.com/hku-mars/FAST-LIVO2.git
+
+WORKDIR /catkin_ws
+RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
+    catkin_make -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_FLAGS='-O3 -Wno-deprecated-declarations' \
+      -j4"
+
+RUN printf '#!/bin/bash\nset -e\nsource /opt/ros/noetic/setup.bash\nsource /catkin_ws/devel/setup.bash\nexec "$@"\n' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+ENV ROSOUT_DISABLE_FILE_LOGGING=1
+WORKDIR /catkin_ws
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

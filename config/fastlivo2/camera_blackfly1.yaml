@@ -1,0 +1,25 @@
+# FAST-LIVO2 camera model — Blackfly S, rectilinear pinhole-radtan.
+# INTRINSICS ARE PLACEHOLDER until Kalibr gives us a valid raw-camchain.
+#
+# Resolution: sensor is 4096x3000 bayer_rggb8. We downscale via `scale` to ease
+# Thor CPU load — 1024x750 is plenty for direct visual-alignment. The
+# cv_bridge debayer + OpenCV resize happens once per frame on subscribe.
+
+%YAML:1.0
+cam_model: Pinhole
+cam_width:  4096
+cam_height: 3000
+scale:      0.25      # 1024 x 750 post-scale
+
+# Placeholder intrinsics — seeded ~focal-length-in-px for 4096 wide at ~60° HFOV.
+# Replace with Kalibr output after re-capture with wider coverage.
+cam_fx: 3000.0
+cam_fy: 3000.0
+cam_cx: 2048.0
+cam_cy: 1500.0
+
+# pinhole-radtan: k1, k2, p1, p2 (no k3)
+cam_d0: 0.0
+cam_d1: 0.0
+cam_d2: 0.0
+cam_d3: 0.0
