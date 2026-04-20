@@ -10,7 +10,7 @@
 # Replace tagRows/tagCols/tagSize/tagSpacing to match your physical target.
 
 target_type: 'aprilgrid'
-tagCols: 6               # number of apriltag columns
-tagRows: 6               # number of apriltag rows
-tagSize: 0.080           # edge-to-edge black square [m]
-tagSpacing: 0.3          # ratio = gap_between_tags / tagSize
+tagCols: 10              # number of apriltag columns (calib.io 10x7 printed label)
+tagRows: 7               # number of apriltag rows
+tagSize: 0.050           # edge-to-edge black square [m] = 50 mm
+tagSpacing: 0.3          # ratio = gap_between_tags / tagSize = 15 / 50

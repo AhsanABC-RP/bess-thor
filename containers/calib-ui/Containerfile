@@ -1,0 +1,43 @@
+# BESS Calibration UI — live coverage + record + Kalibr launcher
+# Build: docker build -t localhost/bess-calib-ui:jazzy -f Containerfile .
+#
+# Extends bess-calib-util:jazzy which already ships ROS 2 Jazzy + rosbags +
+# python3-opencv + apriltag. We add FastAPI/uvicorn/docker-py on top and drop
+# in the server + static assets.
+#
+# Runs with `network_mode: host` so rclpy sees the live sensor topics
+# (same as every other jazzy container in the stack), and with the docker
+# socket bind-mounted so the "Calibrate" button can spawn bess-calib-kalibr.
+
+FROM localhost/bess-calib-util:jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99-thor-clock-skew \
+    && echo 'Acquire::Check-Date "false";'  >> /etc/apt/apt.conf.d/99-thor-clock-skew \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip \
+        ros-jazzy-cv-bridge \
+        ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --break-system-packages \
+        'fastapi>=0.110' \
+        'uvicorn[standard]>=0.27' \
+        'pydantic>=2.0' \
+        'docker>=7.0' \
+        'pupil-apriltags>=1.0.4'
+
+# Server + static assets
+WORKDIR /app
+COPY server.py /app/server.py
+COPY static/ /app/static/
+
+EXPOSE 8091
+
+CMD ["bash", "-lc", "source /opt/ros/jazzy/setup.bash && exec python3 /app/server.py"]

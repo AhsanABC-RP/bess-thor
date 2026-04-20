@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>BESS Calibration</title>
+<link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+<header>
+  <h1>Calib</h1>
+  <div id="status" class="pill">idle</div>
+  <label class="hdr-label">Camera
+    <select id="preset"></select>
+  </label>
+  <label class="hdr-label">Target
+    <select id="target"></select>
+  </label>
+  <label class="hdr-label grow">Session
+    <input id="session" type="text" placeholder="session name"/>
+  </label>
+  <button id="btn-rotate" class="ghost" title="Rotate preview 90° clockwise">&#x21bb; <span id="t-rot">0°</span></button>
+  <button id="btn-start" class="primary">Start</button>
+  <button id="btn-stop" disabled>Stop</button>
+  <button id="btn-calib" class="accent" disabled>Kalibr</button>
+  <button id="btn-rect" class="ghost" disabled title="Show rectified vs raw (after calibration)">Rectified</button>
+  <button id="btn-drawer" class="ghost" title="Toggle details panel">&#9776;</button>
+</header>
+
+<main>
+  <div class="video-wrap">
+    <img id="live" src="/stream.mjpg" alt="preview"/>
+    <div class="hud">
+      <div class="bar"><label>Grid</label><progress id="p-grid" max="100" value="0"></progress><span id="t-grid">0%</span></div>
+      <div class="bar"><label>Dist</label><progress id="p-dist" max="3" value="0"></progress><span id="t-dist">0/3</span></div>
+      <div class="bar"><label>Tilt</label><progress id="p-tilt" max="5" value="0"></progress><span id="t-tilt">0/5</span></div>
+      <div class="bar"><label>Roll</label><progress id="p-roll" max="5" value="0"></progress><span id="t-roll">0/5</span></div>
+      <div class="bar"><label>Frames</label><progress id="p-frames" max="80" value="0"></progress><span id="t-frames">0</span></div>
+    </div>
+  </div>
+  <aside id="drawer" class="drawer hidden">
+    <h2>Coverage</h2>
+    <canvas id="grid-sidebar" width="340" height="272"></canvas>
+    <div class="coverage-legend"><span class="sw hit"></span>hit<span class="sw miss"></span>miss<span id="grid-dims" class="dims">—</span></div>
+    <h2>Camera settings</h2>
+    <div class="settings">
+      <label>Exposure (µs)
+        <input id="inp-exp" type="number" min="-1" max="100000" step="100" value="3000"/>
+      </label>
+      <label>Gain (dB)
+        <input id="inp-gain" type="number" min="-1" max="40" step="1" value="10"/>
+      </label>
+      <button id="btn-apply-exp" class="primary">Apply</button>
+      <button id="btn-exp-auto" class="ghost" title="Restore auto exposure + auto gain">Auto</button>
+      <small class="hint">Lucid: live. Blackfly: restart-required (TODO).</small>
+    </div>
+    <h2>Status</h2>
+    <pre id="status-txt">waiting&hellip;</pre>
+    <h2>Kalibr</h2>
+    <pre id="kalibr-log">&mdash;</pre>
+  </aside>
+</main>
+
+<div id="rect-modal" class="rect-modal hidden">
+  <div class="rect-modal-inner">
+    <div class="rect-header">
+      <span>Raw vs Rectified (live preview, re-fetched each click)</span>
+      <button id="btn-rect-refresh" class="ghost">Refresh</button>
+      <button id="btn-rect-close" class="ghost">Close</button>
+    </div>
+    <img id="rect-img" src="" alt="rectified preview"/>
+    <div id="rect-err" class="rect-err"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

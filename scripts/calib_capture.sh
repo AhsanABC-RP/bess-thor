@@ -8,21 +8,33 @@
 #   bash scripts/calib_capture.sh <mode> <session_name> [--duration SECS]
 #
 # Modes:
-#   cam-mono <ns>    — single camera intrinsics (e.g. "blackfly1")
-#   cam-stereo <A> <B> — stereo / multi-cam extrinsics (e.g. "blackfly1 blackfly2")
+#   cam-mono <ns>    — single camera intrinsics (e.g. "lucid2")
+#   cam-stereo <A> <B> — LEFT IN AS CAPTURE-ONLY HELPER. Thor's opposing-side
+#                      pairs have no FOV overlap, so kalibr_calibrate_cameras
+#                      --multi-camera cannot solve an extrinsic between them.
+#                      Only use this if you are pointing two genuinely
+#                      co-bore-sighted cameras at one target (rare on Thor).
 #   imu-static       — IMU static capture for allan_variance_ros (no motion, ≥ 3 h ideal)
 #   imu-cam <ns>     — IMU + single camera for kalibr_calibrate_imu_camera
-#   imu-multicam     — IMU + all RGB cams, spatiotemporal Kalibr run
+#   imu-multicam     — IMU + all cams in one bag. NOT for inter-camera extrinsics;
+#                      handy when recording IMU calibration alongside multiple
+#                      mono-intrinsic captures in a single drive so you don't
+#                      have to stop/start between cameras.
 #
-# Output: /mnt/bess-usb/calib/<session_name>/
+# Output: ${CALIB_BASE:-/home/thor/calib}/<session_name>/
 #   - raw.mcap      ROS 2 bag (rosbag2 MCAP storage)
 #   - raw.bag       ROS 1 bag (for Kalibr, created by rosbags-convert)
 #   - manifest.txt  topic list + durations + host info
 #
+# Defaults to /home/thor/calib on host NVMe (~250 GB free). RM110 USB drive
+# at /mnt/bess-usb is reserved for recorder bags and is frequently absent
+# (warm-reboot stuck-state, see project_thor_rm110_warm_reboot.md). Override
+# with CALIB_BASE=/mnt/bess-usb/calib only when the USB drive is verified up.
+#
 # Prereqs:
 #   - Target container(s) publishing on the expected topic names (check with
 #     `ros2 topic list` from inside any ROS 2 container).
-#   - /mnt/bess-usb mounted and writable.
+#   - CALIB_BASE writable with ≥ 10 GB free per 120 s Lucid native-res session.
 
 set -euo pipefail
 
@@ -38,12 +50,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-OUT_BASE="/mnt/bess-usb/calib/${SESSION}"
-if ! mountpoint -q /mnt/bess-usb; then
-    echo "ERROR: /mnt/bess-usb not mounted. Aborting." >&2
+CALIB_BASE="${CALIB_BASE:-/home/thor/calib}"
+OUT_BASE="${CALIB_BASE}/${SESSION}"
+if [[ "${CALIB_BASE}" == /mnt/bess-usb* ]] && ! mountpoint -q /mnt/bess-usb; then
+    echo "ERROR: CALIB_BASE=${CALIB_BASE} but /mnt/bess-usb not mounted. Aborting." >&2
     exit 2
 fi
 mkdir -p "${OUT_BASE}"
+# Free-space guard: 10 GB/120s at Lucid native-res is the dominant budget.
+FREE_GB="$(df -BG --output=avail "${CALIB_BASE}" | tail -1 | tr -dc '0-9')"
+if [[ "${FREE_GB:-0}" -lt 15 ]]; then
+    echo "ERROR: ${CALIB_BASE} has only ${FREE_GB}G free — need ≥ 15G. Aborting." >&2
+    exit 2
+fi
 
 # Namespace → image topic + camera_info topic resolver.
 # Different camera nodes use different namespacing conventions; this maps the

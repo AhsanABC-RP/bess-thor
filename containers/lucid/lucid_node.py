@@ -93,6 +93,57 @@ class LucidCameraNode(Node):
         period = 1.0 / self.target_fps
         self.timer = self.create_timer(period, self.acquisition_callback)
 
+        # Live exposure/gain tweak during calibration — honour ros2 param set
+        self.add_on_set_parameters_callback(self._on_param_set)
+
+    def _on_param_set(self, params):
+        from rcl_interfaces.msg import SetParametersResult
+        for p in params:
+            if p.name == 'exposure_us':
+                self.exposure_us = float(p.value)
+                self._apply_exposure()
+            elif p.name == 'gain_db':
+                self.gain_db = float(p.value)
+                self._apply_gain()
+        return SetParametersResult(successful=True)
+
+    def _apply_exposure(self):
+        if self.device is None:
+            return
+        try:
+            nodemap = self.device.nodemap
+            if self.exposure_us > 0:
+                nodemap['ExposureAuto'].value = 'Off'
+                nodemap['ExposureTime'].value = float(self.exposure_us)
+                self.get_logger().info(f"Live exposure: {self.exposure_us}us")
+            else:
+                nodemap['ExposureAuto'].value = 'Continuous'
+                self.get_logger().info("Live exposure: auto")
+        except Exception as e:
+            self.get_logger().warning(f"Live exposure set failed: {e}")
+
+    def _apply_gain(self):
+        if self.device is None:
+            return
+        try:
+            nodemap = self.device.nodemap
+            if self.gain_db > 0:
+                nodemap['GainAuto'].value = 'Off'
+                nodemap['Gain'].value = float(self.gain_db)
+                self.get_logger().info(f"Live gain: {self.gain_db}dB")
+            else:
+                # Arena SDK on some Lucid models rejects writing 'Continuous' to GainAuto
+                # if GainAutoEnable is gated elsewhere — probe for the enum entry first.
+                try:
+                    entries = [e.symbolic for e in nodemap['GainAuto'].enumentries]
+                except Exception:
+                    entries = ['Continuous']
+                target = 'Continuous' if 'Continuous' in entries else ('Once' if 'Once' in entries else entries[0])
+                nodemap['GainAuto'].value = target
+                self.get_logger().info(f"Live gain: auto ({target})")
+        except Exception as e:
+            self.get_logger().warning(f"Live gain set failed: {type(e).__name__}: {e!r}")
+
     def connect_camera(self):
         """Connect to Lucid camera via Arena SDK."""
         if not ARENA_AVAILABLE:

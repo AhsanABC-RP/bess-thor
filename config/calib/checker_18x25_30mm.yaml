@@ -1,0 +1,7 @@
+# Kalibr checkerboard — 18x25 SQUARES (30 mm each).
+# Kalibr's targetRows/Cols count INNER corners, so 18x25 squares => 17x24 inner.
+target_type: 'checkerboard'
+targetRows: 17
+targetCols: 24
+rowSpacingMeters: 0.030
+colSpacingMeters: 0.030

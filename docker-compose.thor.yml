@@ -823,6 +823,35 @@ services:
     restart: "no"
 
   # ===========================================================================
+  # Calibration UI — http://<thor-ip>:8091 — AprilGrid coverage + record +
+  # Kalibr launch. Opt-in profile `calib`; never in `full`. The sequenced
+  # launcher never starts it. Run ad-hoc:
+  #   docker compose -f docker-compose.thor.yml --profile calib up -d calib-ui
+  # ===========================================================================
+  calib-ui:
+    image: localhost/bess-calib-ui:jazzy
+    container_name: calib-ui
+    network_mode: host
+    ipc: host
+    environment:
+      ROS_DOMAIN_ID: "0"
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      CYCLONEDDS_URI: file:///cyclonedds.xml
+    volumes:
+      - ./config/cyclonedds.xml:/cyclonedds.xml:ro
+      - ./config/calib:/config:ro
+      - /home/thor/calib:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Bind-mount server + static assets so UX iteration doesn't require an
+      # image rebuild. The image still bakes a copy so it can run without the
+      # mount; compose runs always track the live source tree.
+      - ./containers/calib-ui/server.py:/app/server.py:ro
+      - ./containers/calib-ui/static:/app/static:ro
+    profiles:
+      - calib
+    restart: "no"
+
+  # ===========================================================================
   # SLAM (from original compose - kept for reference)
   # ===========================================================================
   glim:
