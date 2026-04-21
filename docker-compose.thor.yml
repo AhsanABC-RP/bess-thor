@@ -491,7 +491,9 @@ services:
     volumes:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/blackfly_s_thor.yaml:/config/blackfly_s_thor.yaml:ro
+      - ./config/camera_info:/root/.ros/camera_info:ro
       - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
+      - ./scripts/blackfly_supervisor.sh:/usr/local/bin/blackfly_supervisor.sh:ro
     command:
       - bash
       - -c
@@ -502,6 +504,10 @@ services:
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[blackfly1] Starting Blackfly S #1 C++ driver (SN 25073269)..."
+          # Spawn supervisor that kills ros2run if topic stays 0 Hz (driver
+          # stuck in -1002 retry loop — see scripts/blackfly_supervisor.sh).
+          /usr/local/bin/blackfly_supervisor.sh blackfly1 &
+          SUP_PID=$!
           ros2 run spinnaker_camera_driver camera_driver_node --ros-args \
             -r __node:=blackfly_camera -r __ns:=/blackfly/camera1 \
             -p serial_number:="'25073269'" \
@@ -531,6 +537,10 @@ services:
             -p chunk_enable_timestamp:=true \
             -p gev_ieee_1588:=true \
             -p gev_ieee_1588_mode:=SlaveOnly || true
+          # Driver exited (crash, supervisor kill, or clean shutdown).
+          # Tear down any lingering supervisor so we don't leak processes.
+          kill "$${SUP_PID}" 2>/dev/null || true
+          wait "$${SUP_PID}" 2>/dev/null || true
           echo "[blackfly1] Exited, waiting 30s for GigE heartbeat to clear..."
           sleep 30
         done
@@ -551,7 +561,9 @@ services:
     volumes:
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/blackfly_s_thor.yaml:/config/blackfly_s_thor.yaml:ro
+      - ./config/camera_info:/root/.ros/camera_info:ro
       - ./scripts/healthcheck_topic.sh:/usr/local/bin/healthcheck_topic.sh:ro
+      - ./scripts/blackfly_supervisor.sh:/usr/local/bin/blackfly_supervisor.sh:ro
     command:
       - bash
       - -c
@@ -562,6 +574,10 @@ services:
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
           echo "[blackfly2] Starting Blackfly S #2 C++ driver (SN 25073270)..."
+          # Supervisor kills ros2run if topic stays 0 Hz (driver stuck in
+          # -1002 retry loop — see scripts/blackfly_supervisor.sh).
+          /usr/local/bin/blackfly_supervisor.sh blackfly2 &
+          SUP_PID=$!
           ros2 run spinnaker_camera_driver camera_driver_node --ros-args \
             -r __node:=blackfly_camera -r __ns:=/blackfly/camera2 \
             -p serial_number:="'25073270'" \
@@ -591,6 +607,10 @@ services:
             -p chunk_enable_timestamp:=true \
             -p gev_ieee_1588:=true \
             -p gev_ieee_1588_mode:=SlaveOnly || true
+          # Driver exited (crash, supervisor kill, or clean shutdown).
+          # Tear down any lingering supervisor so we don't leak processes.
+          kill "$${SUP_PID}" 2>/dev/null || true
+          wait "$${SUP_PID}" 2>/dev/null || true
           echo "[blackfly2] Exited, waiting 30s for GigE heartbeat to clear..."
           sleep 30
         done
@@ -1060,10 +1080,11 @@ services:
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
     working_dir: /recordings
     environment:
-      # 100 GB soft cap on rolling bag dir. Pruner (below) trims oldest splits
-      # every 10s while total > CAP_BYTES. Raised from 40 GB after 2026-04-14
-      # NVMe ENOSPC incident wedged Claude Code Bash tool.
-      CAP_BYTES: "100000000000"
+      # 1 TB rolling cap on /mnt/bess-usb (RM110 ext4, 7.3 T / 4.7 T free).
+      # Pruner trims oldest .mcap splits every 10 s while total > CAP_BYTES.
+      # Raised 2026-04-21 for USB-C soak test. Prereq: /mnt/bess-usb must have
+      # ≥ 1.5 T free before starting — cap alone does NOT protect the fs.
+      CAP_BYTES: "1000000000000"
     command:
       - bash
       - -c

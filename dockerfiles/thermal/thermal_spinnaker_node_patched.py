@@ -130,8 +130,25 @@ class ThermalSpinnakerNode(Node):
             if self.system is None:
                 self.system = PySpin.System.GetInstance()
 
-            # Global discovery — find cameras on all interfaces, filter by MAC
-            cam_list = self.system.GetCameras()
+            # Sensor-interface-only discovery. Host networking exposes every
+            # NIC with a 169.254 neighbour to Spinnaker; System.GetCameras()
+            # then enumerates the same camera once per reachable interface,
+            # causing -1005 "open by another application" on a later Open()
+            # because a ghost handle from the duplicate interface already
+            # holds the session. Fix: pick the 169.254.* sensor interface
+            # explicitly and enumerate only on that one Interface.
+            # (See ros-drivers/flir_camera_driver#190, research notes 2026-04-21.)
+            sensor_iface = self._find_sensor_interface()
+            if sensor_iface is not None:
+                cam_list = sensor_iface.GetCameras()
+                self.get_logger().info(
+                    f'Using sensor interface only ({cam_list.GetSize()} camera(s))'
+                )
+            else:
+                self.get_logger().warn(
+                    'Sensor interface (169.254.*) not found — falling back to global discovery'
+                )
+                cam_list = self.system.GetCameras()
 
             n_cams = cam_list.GetSize()
             self.get_logger().info(f'Spinnaker found {n_cams} camera(s)')
