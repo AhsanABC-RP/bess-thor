@@ -220,11 +220,15 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[thermal1] Starting A6701 #1 (MAC 00:11:1c:05:8f:20) via Spinnaker (interface-filter patch)..."
+          echo "[thermal1] Starting A6701 #1 (MAC 00:11:1c:05:8f:4c) via Spinnaker (interface-filter patch)..."
+          # MAC updated 2026-04-22: previous unit 00:11:1c:05:8f:20 was DOA
+          # (Pleora iPORT firmware-locked at persistent IP 169.254.128.202,
+          # non-responsive to GVCP/ARP/ForceIP on any SDK/tool/subnet).
+          # Swap to new A6701 on same cable/port (sfp28-15) resolved it.
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
             -r __ns:=/thermal/camera1 \
             -p frame_id:=thermal1_optical_frame \
-            -p camera_mac:=00:11:1c:05:8f:20 || true
+            -p camera_mac:=00:11:1c:05:8f:4c || true
           echo "[thermal1] Exited, restarting in 5s..."
           sleep 5
         done
