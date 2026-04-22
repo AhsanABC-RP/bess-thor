@@ -1090,21 +1090,22 @@ services:
     container_name: recorder
     user: "1000:1000"
     volumes:
-      # /mnt/bess-usb is the HighPoint RM110 ext4 (7.3T). Never point this at
-      # /home/thor/recordings/* on the NVMe — the 2026-04-14 ENOSPC incident
-      # wedged Claude Code via stdout tmpfile ENOSPC. Re-verify mount + free
-      # space (bess-cold-start-check.sh checks both) before enabling.
-      - /mnt/bess-usb/bags:/recordings:rw
+      # F8 TerraMaster NAS (NFSv4.2 nconnect=8, sfp28-16 10G direct). Proven
+      # sustained 800 MB/s write per 2026-04-22 fio bench + 475 MB/s real-world
+      # across 1.2 TB rsync. RM110 USB is unreliable post-warm-reboot, NAS is
+      # now primary recorder destination. Fall back to /mnt/bess-usb/bags only
+      # if NAS becomes unreachable — swap the volume line below.
+      - /home/thor/nas/bess-bags:/recordings:rw
       - /home/thor/rosbag_qos.yaml:/rosbag_qos.yaml:ro
       - ./config/cyclonedds.xml:/config/cyclonedds.xml:ro
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
     working_dir: /recordings
     environment:
-      # 1 TB rolling cap on /mnt/bess-usb (RM110 ext4, 7.3 T / 4.7 T free).
+      # 3 TB rolling cap on F8 NAS (7.2 T total, ~6 T free as of 2026-04-22).
       # Pruner trims oldest .mcap splits every 10 s while total > CAP_BYTES.
-      # Raised 2026-04-21 for USB-C soak test. Prereq: /mnt/bess-usb must have
-      # ≥ 1.5 T free before starting — cap alone does NOT protect the fs.
-      CAP_BYTES: "1000000000000"
+      # Sized for multi-hour soak: at ~200 MB/s aggregate topic rate,
+      # 3 TB holds ~4 h 10 min of continuous recording before the first prune.
+      CAP_BYTES: "3000000000000"
     command:
       - bash
       - -c
