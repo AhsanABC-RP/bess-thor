@@ -100,6 +100,8 @@ dnsmasq \
     --dhcp-host=1c:0f:af:07:a9:cd,169.254.20.23,Lucid-1 \
     --dhcp-host=1c:0f:af:07:a9:e7,169.254.20.14,Lucid-2 \
     --dhcp-host=6c:bf:b5:04:04:ae,169.254.100.30,F8-NAS \
+    --dhcp-option=3 \
+    --dhcp-option=6 \
     --no-resolv --no-hosts \
     --log-facility=/tmp/dnsmasq-sensors.log \
     --pid-file=/tmp/dnsmasq-sensors.pid \
