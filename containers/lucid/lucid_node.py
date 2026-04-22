@@ -42,6 +42,7 @@ class LucidCameraNode(Node):
 
         # Parameters
         self.declare_parameter('camera_ip', os.environ.get('CAMERA_IP', ''))
+        self.declare_parameter('camera_mac', os.environ.get('CAMERA_MAC', ''))
         self.declare_parameter('camera_name', os.environ.get('CAMERA_NAME', 'camera1'))
         self.declare_parameter('frame_id', os.environ.get('FRAME_ID', 'camera1_optical_frame'))
         self.declare_parameter('exposure_us', 10000.0)
@@ -51,6 +52,7 @@ class LucidCameraNode(Node):
         self.declare_parameter('pixel_format', 'BayerGB8')  # ATX650G-C default
 
         self.camera_ip = self.get_parameter('camera_ip').value
+        self.camera_mac = self.get_parameter('camera_mac').value.lower().strip()
         self.camera_name = self.get_parameter('camera_name').value
         self.frame_id = self.get_parameter('frame_id').value
         self.exposure_us = self.get_parameter('exposure_us').value
@@ -166,8 +168,18 @@ class LucidCameraNode(Node):
                 self.get_logger().error("No Lucid cameras found")
                 return False
 
-            # Further filter by IP if specified
-            if self.camera_ip:
+            # Further filter by MAC (preferred — robust against auto-IP changes)
+            # or IP (fallback for legacy configs).
+            if self.camera_mac:
+                def _mac_norm(m):
+                    return (m or '').lower().replace('-', ':').replace('.', ':').strip()
+                target = _mac_norm(self.camera_mac)
+                lucid_infos = [d for d in lucid_infos if _mac_norm(d.get('mac', '')) == target]
+                if not lucid_infos:
+                    self.get_logger().error(f"No Lucid camera found with MAC: {self.camera_mac}")
+                    return False
+                self.get_logger().info(f"Matched Lucid by MAC: {self.camera_mac}")
+            elif self.camera_ip:
                 lucid_infos = [d for d in lucid_infos if d.get('ip') == self.camera_ip]
                 if not lucid_infos:
                     self.get_logger().error(f"No Lucid camera found at IP: {self.camera_ip}")

@@ -220,7 +220,7 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[thermal1] Starting A6701 #1 (MAC 00:11:1c:05:8f:20)..."
+          echo "[thermal1] Starting A6701 #1 (MAC 00:11:1c:05:8f:20) via Spinnaker (interface-filter patch)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
             -r __ns:=/thermal/camera1 \
             -p frame_id:=thermal1_optical_frame \
@@ -255,7 +255,7 @@ services:
         export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
         export CYCLONEDDS_URI=file:///config/cyclonedds.xml
         while true; do
-          echo "[thermal2] Starting A6701 #2 (MAC 00:11:1c:05:8f:27)..."
+          echo "[thermal2] Starting A6701 #2 (MAC 00:11:1c:05:8f:27) via Spinnaker (interface-filter patch)..."
           python3 /ros2_ws/thermal_spinnaker_node.py --ros-args \
             -r __ns:=/thermal/camera2 \
             -p frame_id:=thermal2_optical_frame \
@@ -370,9 +370,12 @@ services:
         source /opt/ros/jazzy/setup.bash
         source /ros2_ws/install/setup.bash 2>/dev/null || true
         while true; do
-          echo "[lucid1] Starting Lucid Atlas #1..."
+          echo "[lucid1] Starting Lucid Atlas #1 (MAC 1c:0f:af:07:a9:cd)..."
+          # Match by MAC — survives auto-IP drift. dnsmasq reservation still
+          # gives .20.23 when camera DHCPs, but if it falls back to LLA the
+          # node now discovers regardless of IP.
           python3 /ros2_ws/lucid_node.py --ros-args \
-            -p camera_ip:=169.254.20.23 \
+            -p camera_mac:=1c:0f:af:07:a9:cd \
             -p camera_name:=lucid1 \
             -p frame_id:=lucid1_optical_frame \
             -p fps:=3.0 \
@@ -410,9 +413,9 @@ services:
         source /opt/ros/jazzy/setup.bash
         source /ros2_ws/install/setup.bash 2>/dev/null || true
         while true; do
-          echo "[lucid2] Starting Lucid Atlas #2..."
+          echo "[lucid2] Starting Lucid Atlas #2 (MAC 1c:0f:af:07:a9:e7)..."
           python3 /ros2_ws/lucid_node.py --ros-args \
-            -p camera_ip:=169.254.20.14 \
+            -p camera_mac:=1c:0f:af:07:a9:e7 \
             -p camera_name:=lucid2 \
             -p frame_id:=lucid2_optical_frame \
             -p fps:=3.0 \
