@@ -26,8 +26,14 @@ log() { echo "[${TAG}-supervisor] $*"; }
 
 # Wait for the camera_driver_node to actually be up before watching.
 # Give it up to 120 s after the bash parent script launches the process.
+#
+# pgrep matcher MUST target the compiled binary path, NOT the argv string.
+# The outer compose `bash -c` command includes "camera_driver_node" as an
+# argv to `ros2 run`, so `pgrep -f camera_driver_node` matches bash PID 1
+# first (which never dies). Match the binary path under /lib/ instead —
+# that only appears in the actual driver process's /proc/<pid>/cmdline.
 for _ in $(seq 1 60); do
-  pid=$(pgrep -f "camera_driver_node" | head -1)
+  pid=$(pgrep -f "/lib/spinnaker_camera_driver/camera_driver_node" | head -1)
   if [ -n "${pid:-}" ]; then break; fi
   sleep 2
 done
@@ -76,7 +82,9 @@ ZERO_LIMIT=15   # 15 * POLL = 30 s of 0 Hz -> kill
 while kill -0 "$pid" 2>/dev/null; do
   # Measure rate over 3 s. ros2 topic hz prints over stderr; take last average.
   rate=$(timeout 4 ros2 topic hz "$TOPIC" 2>&1 | grep -oE "average rate: [0-9.]+" | tail -1 | awk '{print $3}')
-  if [ -z "${rate:-}" ] || [ "$rate" = "0" ] || [ "$(echo "$rate < 0.1" | bc -l 2>/dev/null)" = "1" ]; then
+  # bc is not guaranteed in the container; use awk for float comparison.
+  low=$(awk -v r="${rate:-0}" 'BEGIN{print (r+0 < 0.1) ? 1 : 0}' 2>/dev/null || echo 0)
+  if [ -z "${rate:-}" ] || [ "$rate" = "0" ] || [ "$low" = "1" ]; then
     zero_streak=$((zero_streak + 1))
     log "zero-Hz streak ${zero_streak}/${ZERO_LIMIT} (rate=${rate:-none})"
     if [ "$zero_streak" -ge "$ZERO_LIMIT" ]; then

@@ -940,6 +940,15 @@ services:
   # ===========================================================================
   dlio:
     <<: *common
+    # SLAM services override the global restart:"no" from &common. The
+    # boot-loop root cause (2026-04-14/15) was ~30 containers race-restarting
+    # at docker.service startup; SLAM is gated behind sensors in
+    # scripts/bess-stack-up.sh so it never contributes to cold-boot
+    # contention. DLIO has intermittent heap corruption under sustained
+    # OS1-128 load (free(): invalid next size) that we can't fix upstream
+    # — on-failure with a retry cap gives the container auto-respawn
+    # without allowing an infinite crash loop.
+    restart: on-failure:10
     image: localhost/bess-dlio:jazzy
     container_name: dlio
     mem_limit: 16g
@@ -1011,6 +1020,8 @@ services:
   # ===========================================================================
   fast-lio:
     <<: *common
+    # SLAM service — see dlio restart policy comment for rationale.
+    restart: on-failure:10
     image: localhost/bess-fast-lio:jazzy
     container_name: fast-lio
     mem_limit: 16g
@@ -1043,6 +1054,8 @@ services:
   # ===========================================================================
   slam-map-accumulator:
     <<: *common
+    # SLAM service — see dlio restart policy comment for rationale.
+    restart: on-failure:10
     image: localhost/bess-ouster:jazzy
     container_name: slam-map-accumulator
     volumes:

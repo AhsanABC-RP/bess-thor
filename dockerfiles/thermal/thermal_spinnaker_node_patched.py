@@ -36,7 +36,24 @@ class ThermalSpinnakerNode(Node):
         self.declare_parameter('publish_camera_info', True)
         self.declare_parameter('camera_mac', '')
         self.declare_parameter('packet_size', 1400)
-        self.declare_parameter('reconnect_interval', 5.0)
+        # GigE Vision heartbeat timeout is ~45s on A70 firmware; a 5s
+        # reconnect is too short — the camera still holds the previous
+        # control session and the new Open() fails with -1010. 60s gives
+        # the camera time to fully release the session before we retry.
+        self.declare_parameter('reconnect_interval', 60.0)
+        # Rate watchdog: if the driver is publishing but the rate drops
+        # below `rate_floor_hz` for `rate_floor_window_s` consecutive
+        # seconds, force a reconnect even if consecutive_errors hasn't
+        # tripped. The A70 degrades to sustained 3-8 Hz with one -1011
+        # every ~80s (never 50 consecutive) and the driver otherwise
+        # sits there forever at half rate. Set rate_floor_hz=0 to disable.
+        self.declare_parameter('rate_floor_hz', 3.0)
+        self.declare_parameter('rate_floor_window_s', 30.0)
+        # How many consecutive errors before forcing a reconnect. Upstream
+        # default was 50 but that rarely fires because successful frames
+        # reset the counter. 15 is tight enough to catch sustained -1011
+        # bursts without bouncing on single-packet drops.
+        self.declare_parameter('error_threshold', 15)
         self.declare_parameter('binning', 1)
         self.declare_parameter('pixel_format', 'Mono16')
         self.declare_parameter('temperature_period_sec', 15.0)
@@ -48,6 +65,9 @@ class ThermalSpinnakerNode(Node):
         self.camera_mac = self.get_parameter('camera_mac').value.lower().strip()
         self.packet_size = self.get_parameter('packet_size').value
         self.reconnect_interval = self.get_parameter('reconnect_interval').value
+        self.rate_floor_hz = float(self.get_parameter('rate_floor_hz').value)
+        self.rate_floor_window_s = float(self.get_parameter('rate_floor_window_s').value)
+        self.error_threshold = int(self.get_parameter('error_threshold').value)
         self.binning = self.get_parameter('binning').value
         self.pixel_format = self.get_parameter('pixel_format').value
         self.temp_period = float(self.get_parameter('temperature_period_sec').value)
@@ -604,6 +624,10 @@ class ThermalSpinnakerNode(Node):
             consecutive_errors = 0
             frame_count = 0
             last_log = time.time()
+            # Rate-watchdog state: track the first time the rate-log saw
+            # fps < rate_floor_hz. If that persists for rate_floor_window_s
+            # we reconnect even without consecutive errors tripping.
+            low_rate_since = None
             # Prime the temp topic right away so subscribers don't wait
             # temperature_period_sec for the first reading.
             self._read_and_publish_temps()
@@ -630,6 +654,20 @@ class ThermalSpinnakerNode(Node):
                     if now - last_log >= 5.0:
                         fps = frame_count / (now - last_log)
                         self.get_logger().info(f'Publishing at {fps:.1f} Hz')
+                        # Rate-watchdog: mark/clear the low-rate-since anchor.
+                        if self.rate_floor_hz > 0 and fps < self.rate_floor_hz:
+                            if low_rate_since is None:
+                                low_rate_since = now
+                                self.get_logger().warn(
+                                    f'Rate below floor ({fps:.1f} < '
+                                    f'{self.rate_floor_hz} Hz), watching...'
+                                )
+                        else:
+                            if low_rate_since is not None:
+                                self.get_logger().info(
+                                    f'Rate recovered to {fps:.1f} Hz'
+                                )
+                            low_rate_since = None
                         frame_count = 0
                         last_log = now
 
@@ -644,9 +682,22 @@ class ThermalSpinnakerNode(Node):
                     time.sleep(0.1)
 
                 # If too many consecutive errors, reconnect
-                if consecutive_errors >= 50:
+                if consecutive_errors >= self.error_threshold:
                     self.get_logger().error(
                         f'{consecutive_errors} consecutive errors, reconnecting...'
+                    )
+                    break
+
+                # Rate-watchdog: force reconnect if rate stays below floor
+                # for the full window. Catches the sustained-degraded state
+                # where successful frames keep resetting consecutive_errors.
+                if (
+                    low_rate_since is not None
+                    and (time.time() - low_rate_since) >= self.rate_floor_window_s
+                ):
+                    self.get_logger().error(
+                        f'Rate stayed below {self.rate_floor_hz} Hz for '
+                        f'{self.rate_floor_window_s:.0f}s, reconnecting...'
                     )
                     break
 

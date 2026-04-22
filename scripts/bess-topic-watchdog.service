@@ -1,0 +1,29 @@
+[Unit]
+Description=BESS topic-rate watchdog (auto-kicks silent sensor/SLAM containers)
+# Only useful once the stack is up. Do NOT chain this with Wants= from
+# bess-stack-up.sh — a bad watchdog action at boot could amplify any
+# cold-start issue. Manual enable pattern mirrors bess-stack.service.
+After=docker.service
+Requires=docker.service
+
+# Rate-limit matches bess-stack.service — 3 starts per day. If this
+# keeps crashing something is structurally wrong with the script.
+StartLimitIntervalSec=86400
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+ExecStart=/home/thor/bess/scripts/topic_watchdog.sh
+Restart=on-failure
+RestartSec=30s
+StandardOutput=append:/var/log/bess/topic_watchdog.stdout.log
+StandardError=append:/var/log/bess/topic_watchdog.stderr.log
+Environment=LOG_PATH=/var/log/bess/topic_watchdog.log
+Environment=POLL_INTERVAL=30
+Environment=HZ_SAMPLE_WINDOW=5
+Environment=TRIGGER_SECONDS=60
+Environment=MAX_ACTIONS_PER_HOUR=3
+
+[Install]
+WantedBy=multi-user.target
