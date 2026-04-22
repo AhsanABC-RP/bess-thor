@@ -15,7 +15,7 @@ truth for Thor. This file is a short repo-level orientation.
 | Project rules | `/home/thor/CLAUDE.md` (READ FIRST) |
 | Vehicle doc | `/home/thor/bess_platform/vehicles/thor/CLAUDE.md` |
 | Foxglove URL | `wss://thor.tail902411.ts.net:8765` (Tailscale, native app) |
-| iPad browser viz | `http://192.168.1.209:8080` + `ws://192.168.1.209:8766` (Lichtblick, LAN) |
+| iPad browser viz | `http://169.254.100.1:8080` + `ws://169.254.100.1:8766` (Lichtblick over sfp28-10 ethernet — see home CLAUDE.md §12) |
 | Platform | NVIDIA Thor Dev Kit (Grace Blackwell, ARM64, Ubuntu 24.04, kernel 6.8.12-tegra) |
 | ROS 2 | Jazzy (primary) / Humble (thermal+cameras legacy) |
 | DDS | CycloneDDS (see `config/cyclonedds.xml`) |
