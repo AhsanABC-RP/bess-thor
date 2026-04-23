@@ -43,8 +43,18 @@ MT_PASS=$(grep -E '^MT_PASS=' "$SWEEP" | head -1 | sed 's/.*:-\([^}]*\)}.*/\1/')
 [ -z "$MT_USER" ] && MT_USER=admin
 
 mt() {
-  sshpass -p "$MT_PASS" ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR \
-    "$MT_USER@$MT_HOST" "$@"
+  # sshpass under sudo has been observed to return non-zero on first call
+  # even when the RouterOS command lands successfully (probably a TTY/env
+  # interaction). Retry once with a short delay before treating as fatal.
+  local attempt
+  for attempt in 1 2; do
+    sshpass -p "$MT_PASS" ssh \
+      -o StrictHostKeyChecking=no -o LogLevel=ERROR \
+      -o ConnectTimeout=10 -o ServerAliveInterval=5 \
+      "$MT_USER@$MT_HOST" "$@" && return 0
+    [ "$attempt" = "1" ] && sleep 2
+  done
+  return 1
 }
 
 LOG() { echo "[$(date -u +%H:%M:%SZ)] thermal_pleora_recover: $*"; }
