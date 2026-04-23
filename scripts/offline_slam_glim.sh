@@ -25,7 +25,7 @@
 #   bash scripts/offline_slam_glim.sh 40 45 1.0 bags40to45
 #
 # Output:
-#   /mnt/bess-usb/bags/rolling/slam_offline/glim_<tag>/
+#   /home/thor/nas/bess-bags/rolling/slam_offline/glim_<tag>/
 #     slam_output/   MCAP with /glim_ros/* + /tf + /tf_static + /clock
 
 set -euo pipefail
@@ -35,8 +35,8 @@ END=${2:?missing end_bag}
 RATE=${3:-1.0}
 TAG=${4:-run}
 
-BAG_DIR="/mnt/bess-usb/bags/rolling/bag"
-OUT_BASE="/mnt/bess-usb/bags/rolling/slam_offline/glim_${TAG}"
+BAG_DIR="/home/thor/nas/bess-bags/rolling/bag"
+OUT_BASE="/home/thor/nas/bess-bags/rolling/slam_offline/glim_${TAG}"
 LOG_DIR="${OUT_BASE}/logs"
 BAG_OUT="${OUT_BASE}/slam_output"
 

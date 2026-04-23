@@ -10,13 +10,13 @@
 #
 # Quick preview after any run:
 #   python3 scripts/extract_slam_cloud.py \
-#       /mnt/bess-usb/bags/rolling/slam_offline/slam_output/ \
+#       /home/thor/nas/bess-bags/rolling/slam_offline/slam_output/ \
 #       -o slam_preview.ply --voxel 0.1
 
 set -e
 
-BAG_DIR="/mnt/bess-usb/bags/rolling/bag"
-OUT_DIR="/mnt/bess-usb/bags/rolling/slam_offline"
+BAG_DIR="/home/thor/nas/bess-bags/rolling/bag"
+OUT_DIR="/home/thor/nas/bess-bags/rolling/slam_offline"
 START=${1:-0}
 END=${2:-144}
 RATE=${3:-0.5}

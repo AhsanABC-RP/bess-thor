@@ -2,7 +2,7 @@
 """
 Audit per-bag motion on the rolling site-trial bags.
 
-For each bag in /mnt/bess-usb/bags/rolling/bag/bag_*.mcap:
+For each bag in /home/thor/nas/bess-bags/rolling/bag/bag_*.mcap:
   - Read /dlio/odom_node/odom (primary motion signal — present in every bag).
   - Compute bag duration, total XYZ path length, net displacement start->end,
     peak linear speed, peak angular speed, and IMU accel magnitude variance
@@ -14,7 +14,7 @@ restricted to the drive portion.
 
 Usage:
   python3 scripts/audit_bag_motion.py
-  python3 scripts/audit_bag_motion.py --bag-dir /mnt/bess-usb/bags/rolling/bag --min-path 1.0
+  python3 scripts/audit_bag_motion.py --bag-dir /home/thor/nas/bess-bags/rolling/bag --min-path 1.0
 """
 from __future__ import annotations
 
@@ -128,11 +128,11 @@ def audit_bag(path: Path) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "--bag-dir", default="/mnt/bess-usb/bags/rolling/bag",
+        "--bag-dir", default="/home/thor/nas/bess-bags/rolling/bag",
         help="Directory containing bag_N.mcap files",
     )
     ap.add_argument(
-        "--out-dir", default="/mnt/bess-usb/bags/rolling/slam_offline",
+        "--out-dir", default="/home/thor/nas/bess-bags/rolling/slam_offline",
         help="Where to write motion_audit.csv + motion_audit.json",
     )
     ap.add_argument(

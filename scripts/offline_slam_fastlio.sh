@@ -19,7 +19,7 @@
 #   bash scripts/offline_slam_fastlio.sh 16 22 1.0 drive1
 #
 # Output:
-#   /mnt/bess-usb/bags/rolling/slam_offline/fastlio_<tag>/
+#   /home/thor/nas/bess-bags/rolling/slam_offline/fastlio_<tag>/
 #     slam_output/   MCAP with /fast_lio/* + /tf + /tf_static + /clock
 
 set -euo pipefail
@@ -29,8 +29,8 @@ END=${2:?missing end_bag}
 RATE=${3:-1.0}
 TAG=${4:-run}
 
-BAG_DIR="/mnt/bess-usb/bags/rolling/bag"
-OUT_BASE="/mnt/bess-usb/bags/rolling/slam_offline/fastlio_${TAG}"
+BAG_DIR="/home/thor/nas/bess-bags/rolling/bag"
+OUT_BASE="/home/thor/nas/bess-bags/rolling/slam_offline/fastlio_${TAG}"
 LOG_DIR="${OUT_BASE}/logs"
 BAG_OUT="${OUT_BASE}/slam_output"
 
@@ -198,7 +198,7 @@ ls -lh "$BAG_OUT/slam_output/" 2>/dev/null || true
 echo ""
 echo "Next: export LAS (reads /ouster/points from original input bags):"
 echo "  python3 $BESS_ROOT/scripts/offline_slam_to_las.py \\"
-echo "      /mnt/bess-usb/bags/rolling/slam_offline/raw_${TAG}_link \\"
+echo "      /home/thor/nas/bess-bags/rolling/slam_offline/raw_${TAG}_link \\"
 echo "      --odom-bag-dir $BAG_OUT/slam_output \\"
 echo "      --odom-topic /fast_lio/odometry \\"
 echo "      --output $OUT_BASE/export"

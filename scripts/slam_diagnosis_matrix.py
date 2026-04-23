@@ -68,8 +68,8 @@ def discover_runs(slam_offline):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--slam-offline", default="/mnt/bess-usb/bags/rolling/slam_offline")
-    ap.add_argument("--segments-yaml", default="/mnt/bess-usb/bags/rolling/slam_offline/segments.yaml")
+    ap.add_argument("--slam-offline", default="/home/thor/nas/bess-bags/rolling/slam_offline")
+    ap.add_argument("--segments-yaml", default="/home/thor/nas/bess-bags/rolling/slam_offline/segments.yaml")
     args = ap.parse_args()
 
     segments = parse_segments_yaml(args.segments_yaml)

@@ -29,7 +29,7 @@ RATE=1.0
 MAX_SPEED=35.0
 MAX_EXTENT=3000.0
 BESS_ROOT="/home/thor/bess"
-SLAM_OFFLINE="/mnt/bess-usb/bags/rolling/slam_offline"
+SLAM_OFFLINE="/home/thor/nas/bess-bags/rolling/slam_offline"
 RUNS_CSV="$SLAM_OFFLINE/runs.csv"
 
 usage() {
@@ -194,12 +194,12 @@ ensure_raw_link() {
     if [ -d "$link_dir" ]; then return; fi
     mkdir -p "$link_dir"
     for i in $(seq "$start" "$end"); do
-        local src="/mnt/bess-usb/bags/rolling/bag/bag_${i}.mcap"
+        local src="/home/thor/nas/bess-bags/rolling/bag/bag_${i}.mcap"
         [ -f "$src" ] && ln -sf "$src" "$link_dir/bag_${i}.mcap"
     done
     # ros2 bag expects a metadata.yaml next to splits — copy from top-level
-    if [ -f "/mnt/bess-usb/bags/rolling/bag/metadata.yaml" ]; then
-        ln -sf "/mnt/bess-usb/bags/rolling/bag/metadata.yaml" "$link_dir/metadata.yaml"
+    if [ -f "/home/thor/nas/bess-bags/rolling/bag/metadata.yaml" ]; then
+        ln -sf "/home/thor/nas/bess-bags/rolling/bag/metadata.yaml" "$link_dir/metadata.yaml"
     fi
 }
 

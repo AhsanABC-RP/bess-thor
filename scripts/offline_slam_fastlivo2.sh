@@ -19,9 +19,9 @@ END=${2:?missing end_bag}
 RATE=${3:-1.0}
 TAG=${4:-run}
 
-BAG_DIR="/mnt/bess-usb/bags/rolling/bag"
-ROS1_BAG_DIR="/mnt/bess-usb/bags/rolling/bag_ros1"   # cached converted bags
-OUT_BASE="/mnt/bess-usb/bags/rolling/slam_offline/fastlivo2_${TAG}"
+BAG_DIR="/home/thor/nas/bess-bags/rolling/bag"
+ROS1_BAG_DIR="/home/thor/nas/bess-bags/rolling/bag_ros1"   # cached converted bags
+OUT_BASE="/home/thor/nas/bess-bags/rolling/slam_offline/fastlivo2_${TAG}"
 LOG_DIR="${OUT_BASE}/logs"
 BAG_OUT="${OUT_BASE}/slam_output"
 

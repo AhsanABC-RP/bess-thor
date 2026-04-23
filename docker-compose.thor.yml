@@ -1092,8 +1092,8 @@ services:
     volumes:
       # F8 TerraMaster NAS (NFSv4.2 nconnect=8, sfp28-16 10G direct). Proven
       # sustained 800 MB/s write per 2026-04-22 fio bench + 475 MB/s real-world
-      # across 1.2 TB rsync. RM110 USB is unreliable post-warm-reboot, NAS is
-      # now primary recorder destination. Fall back to /mnt/bess-usb/bags only
+      # across 1.2 TB rsync. F8 NAS is
+      # now primary recorder destination. Fall back to /home/thor/nas/bess-bags only
       # if NAS becomes unreachable — swap the volume line below.
       - /home/thor/nas/bess-bags:/recordings:rw
       - /home/thor/rosbag_qos.yaml:/rosbag_qos.yaml:ro
@@ -1250,11 +1250,11 @@ services:
           /rutx/mobile/operator \
           /diagnostics
     profiles:
-      # Re-enabled 2026-04-15 after /mnt/bess-usb (RM110 ext4, 5.8T free) came
+      # Re-enabled 2026-04-15 after F8 NAS NFS mount came
       # back online and both thermal4 + foxglove schema fixes landed. Starts
       # only via explicit `--profile record` — NOT in `full`, so normal stack
       # startup never auto-starts it. The 2026-04-14 NVMe ENOSPC trap is
-      # closed by the /mnt/bess-usb/bags volume above.
+      # closed by the /home/thor/nas/bess-bags volume above.
       - record
     restart: "no"
 
@@ -1329,8 +1329,8 @@ services:
       - ./config/fastrtps.xml:/config/fastrtps.xml:ro
       - ./config/extraction/cameras.yaml:/config/cameras.yaml:ro
       - ./config/cameras/calibration:/config/cameras/calibration:ro
-      - /mnt/bess-usb/extraction:/data/extraction:rw
-      - /mnt/bess-usb/spatial:/data/spatial:ro
+      - /home/thor/nas/bess-bags/extraction:/data/extraction:rw
+      - /home/thor/nas/bess-bags/spatial:/data/spatial:ro
       - ./containers/extraction/bess-extraction.py:/ros2_ws/bess-extraction.py:ro
     profiles:
       - extraction

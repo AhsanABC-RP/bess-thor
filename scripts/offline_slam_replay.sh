@@ -9,8 +9,8 @@
 
 set -e
 
-BAG_DIR="/mnt/bess-usb/bags/rolling/bag"
-OUT_DIR="/mnt/bess-usb/bags/rolling/slam_offline"
+BAG_DIR="/home/thor/nas/bess-bags/rolling/bag"
+OUT_DIR="/home/thor/nas/bess-bags/rolling/slam_offline"
 START=${1:-0}
 END=${2:-144}
 RATE=${3:-1.0}

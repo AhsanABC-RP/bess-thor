@@ -16,7 +16,7 @@
 #   bash scripts/offline_slam_fullstack.sh 64 71 1.0 drive2   # moving range 2
 #
 # Output:
-#   /mnt/bess-usb/bags/rolling/slam_offline/fullstack_<tag>/
+#   /home/thor/nas/bess-bags/rolling/slam_offline/fullstack_<tag>/
 #     slam_output/          # MCAP bag w/ all three SLAM outputs
 #     logs/{fastlio,dlio,glim,accum,player}.log
 
@@ -27,8 +27,8 @@ END=${2:?missing end_bag}
 RATE=${3:-1.0}
 TAG=${4:-run}
 
-BAG_DIR="/mnt/bess-usb/bags/rolling/bag"
-OUT_BASE="/mnt/bess-usb/bags/rolling/slam_offline/fullstack_${TAG}"
+BAG_DIR="/home/thor/nas/bess-bags/rolling/bag"
+OUT_BASE="/home/thor/nas/bess-bags/rolling/slam_offline/fullstack_${TAG}"
 LOG_DIR="${OUT_BASE}/logs"
 BAG_OUT="${OUT_BASE}/slam_output"
 

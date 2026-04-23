@@ -132,9 +132,9 @@ def group_segments(rows, min_bags=1):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--bag-dir", default="/mnt/bess-usb/bags/rolling/bag")
-    p.add_argument("--out-csv", default="/mnt/bess-usb/bags/rolling/slam_offline/motion_audit_v2.csv")
-    p.add_argument("--out-yaml", default="/mnt/bess-usb/bags/rolling/slam_offline/segments.yaml")
+    p.add_argument("--bag-dir", default="/home/thor/nas/bess-bags/rolling/bag")
+    p.add_argument("--out-csv", default="/home/thor/nas/bess-bags/rolling/slam_offline/motion_audit_v2.csv")
+    p.add_argument("--out-yaml", default="/home/thor/nas/bess-bags/rolling/slam_offline/segments.yaml")
     p.add_argument("--limit", type=int, default=0, help="Limit number of bags (0=all)")
     p.add_argument("--skip-broken", action="store_true", help="Skip bags that fail to parse")
     p.add_argument("--jobs", type=int, default=8, help="Parallel workers (default 8)")

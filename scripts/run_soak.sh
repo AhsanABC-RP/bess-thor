@@ -3,7 +3,7 @@
 #
 # Architecture:
 #   recorder  → writes mcap shards to NVMe cache (/home/thor/bess/data/cache)
-#   offloader → moves sealed shards to USB (/mnt/bess-usb/bags) in parallel
+#   offloader → moves sealed shards to USB (/home/thor/nas/bess-bags) in parallel
 #   monitor   → samples rates, scrapes container logs, checks PTP, alerts
 #
 # Usage: run_soak.sh [duration_minutes] [bag_name_suffix]
@@ -13,7 +13,7 @@ DUR_MIN=${1:-25}
 SUFFIX=${2:-}
 
 CACHE=/home/thor/bess/data/cache
-USB=/mnt/bess-usb/bags
+USB=/home/thor/nas/bess-bags
 LOG_DIR=/home/thor/recordings
 SCRIPT_DIR=/home/thor/bess/scripts
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

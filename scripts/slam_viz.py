@@ -12,7 +12,7 @@ Usage:
   python3 scripts/slam_viz.py <run_dir>
   python3 scripts/slam_viz.py --compare <run_dir1> <run_dir2> ...
 
-Where <run_dir> is like /mnt/bess-usb/bags/rolling/slam_offline/fastlio_drive1
+Where <run_dir> is like /home/thor/nas/bess-bags/rolling/slam_offline/fastlio_drive1
 (contains export/site_trial.las + slam_output/slam_output/*.mcap).
 
 No open3d dep — laspy + matplotlib only, all Agg offscreen.

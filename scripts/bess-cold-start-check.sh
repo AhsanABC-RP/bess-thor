@@ -45,28 +45,20 @@ if [ -n "$ROOT_DEV" ]; then
         hint "sudo fsck -yvf $ROOT_DEV (unmount first — single-user boot)"
     fi
 fi
-# /mnt/bess-usb is autofs-layered on top of ext4. findmnt -t ext4 skips the
-# autofs placeholder line and returns the real /dev/sd* device.
-if mountpoint -q /mnt/bess-usb; then
-    USB_DEV=$(findmnt -nt ext4 /mnt/bess-usb -o SOURCE 2>/dev/null)
-    USB_STATE=$(sudo tune2fs -l "$USB_DEV" 2>/dev/null | awk -F: '/Filesystem state/ {gsub(/^[ \t]+/,"",$2); print $2}')
-    if [ "$USB_STATE" = "clean" ]; then
-        pass "/mnt/bess-usb ($USB_DEV) ext4 state: clean"
+# F8 TerraMaster NAS (primary bag store post-2026-04-23). NFSv4.2 over
+# sfp28-16, mounted at /home/thor/nas/bess-bags via systemd automount.
+if mountpoint -q /home/thor/nas/bess-bags; then
+    NAS_FREE_GB=$(df -BG /home/thor/nas/bess-bags | awk 'NR==2 {gsub(/G/,"",$4); print $4}')
+    if [ "$NAS_FREE_GB" -ge 500 ]; then
+        pass "F8 NAS /home/thor/nas/bess-bags free: ${NAS_FREE_GB}G (recorder prereq ≥500G)"
+    elif [ "$NAS_FREE_GB" -ge 100 ]; then
+        warn "F8 NAS /home/thor/nas/bess-bags free: ${NAS_FREE_GB}G (below recorder prereq 500G)"
     else
-        fail "/mnt/bess-usb ($USB_DEV) ext4 state: ${USB_STATE:-unknown}"
-        hint "sudo umount /mnt/bess-usb && sudo fsck -yvf $USB_DEV && sudo mount /mnt/bess-usb"
-    fi
-    USB_FREE_GB=$(df -BG /mnt/bess-usb | awk 'NR==2 {gsub(/G/,"",$4); print $4}')
-    if [ "$USB_FREE_GB" -ge 500 ]; then
-        pass "/mnt/bess-usb free space: ${USB_FREE_GB}G (recorder prereq ≥500G)"
-    elif [ "$USB_FREE_GB" -ge 100 ]; then
-        warn "/mnt/bess-usb free space: ${USB_FREE_GB}G (below recorder prereq 500G)"
-    else
-        fail "/mnt/bess-usb free space: ${USB_FREE_GB}G (critically low)"
+        fail "F8 NAS /home/thor/nas/bess-bags free: ${NAS_FREE_GB}G (critically low)"
     fi
 else
-    warn "/mnt/bess-usb NOT mounted — RM110 enclosure absent or autofs not triggered"
-    hint "lsusb -d 1103:0110; ls /dev/disk/by-id/*RM110* ; may need physical re-seat"
+    fail "F8 NAS /home/thor/nas/bess-bags NOT mounted"
+    hint "systemctl status home-thor-nas-bess\\\\x2dbags.mount; ping 169.254.100.30"
 fi
 
 ROOT_FREE_GB=$(df -BG / | awk 'NR==2 {gsub(/G/,"",$4); print $4}')

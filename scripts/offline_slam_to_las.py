@@ -8,8 +8,8 @@ Preserves ALL Ouster fields: x,y,z, intensity, reflectivity, ambient (near-IR),
 range, ring, t (per-point timestamp).
 
 Usage:
-    python3 offline_slam_to_las.py /mnt/bess-usb/bags/rolling/bag \
-        --output /mnt/bess-usb/bags/rolling/site_trial \
+    python3 offline_slam_to_las.py /home/thor/nas/bess-bags/rolling/bag \
+        --output /home/thor/nas/bess-bags/rolling/site_trial \
         --voxel 0.05 \
         --max-range 80.0
 

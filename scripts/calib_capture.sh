@@ -27,9 +27,7 @@
 #   - manifest.txt  topic list + durations + host info
 #
 # Defaults to /home/thor/calib on host NVMe (~250 GB free). RM110 USB drive
-# at /mnt/bess-usb is reserved for recorder bags and is frequently absent
 # (warm-reboot stuck-state, see project_thor_rm110_warm_reboot.md). Override
-# with CALIB_BASE=/mnt/bess-usb/calib only when the USB drive is verified up.
 #
 # Prereqs:
 #   - Target container(s) publishing on the expected topic names (check with
@@ -52,8 +50,8 @@ done
 
 CALIB_BASE="${CALIB_BASE:-/home/thor/calib}"
 OUT_BASE="${CALIB_BASE}/${SESSION}"
-if [[ "${CALIB_BASE}" == /mnt/bess-usb* ]] && ! mountpoint -q /mnt/bess-usb; then
-    echo "ERROR: CALIB_BASE=${CALIB_BASE} but /mnt/bess-usb not mounted. Aborting." >&2
+if [[ "${CALIB_BASE}" == /home/thor/nas/* ]] && ! mountpoint -q /home/thor/nas/bess-bags; then
+    echo "ERROR: CALIB_BASE=${CALIB_BASE} but F8 NAS not mounted. Aborting." >&2
     exit 2
 fi
 mkdir -p "${OUT_BASE}"
