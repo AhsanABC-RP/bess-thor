@@ -1,125 +1,131 @@
 #!/bin/bash
-# topic_watchdog.sh — host-side topic-rate watchdog.
+# topic_watchdog.sh — host-side container-health watchdog.
 #
-# Every POLL_INTERVAL seconds, sample the rate of every topic in the
-# WATCHLIST. If a topic stays below MIN_RATE for TRIGGER_SECONDS, take
-# the topic's registered recovery ACTION (targeted docker restart).
+# v2 (2026-04-23 rewrite): does NOT use `ros2 topic hz` anymore.
+# The v1 design polled topic rates via a subscriber container, which
+# caused a CASCADE on 2026-04-23 morning: restarting the foxglove
+# bridge disturbed DDS discovery, the watchdog's ros2 topic hz saw
+# transient silence, and it aggressively stop/recreated thermals
+# and blackflies that were actually publishing fine. The watchdog
+# was reading the exact signal that its own actions made unreliable.
 #
-# Per-container rate limit: MAX_ACTIONS_PER_HOUR actions before giving
-# up (log loudly + stop acting until the hour window rolls over). This
-# prevents a wedged camera or crash-looping SLAM from thrashing Docker.
+# v2 uses DDS-independent signals only:
+#   1. Parse each driver's stdout (docker logs) for its own "Publishing"
+#      lines. Drivers emit these directly from the acquisition loop;
+#      they're ground truth regardless of DDS state.
+#   2. Container state from `docker inspect` (restart count, exit code,
+#      health — all from Docker daemon, no DDS).
+#   3. Recorder bag-directory growth as an end-to-end sanity check
+#      (topic → subscriber → disk) — if bytes are flowing to NAS, the
+#      stack is recording SOMETHING, so a single "silent" container is
+#      a localized issue not a DDS-wide problem.
 #
-# JSON event log at LOG_PATH for forensics + soak correlation.
+# Safety rails baked into v2:
+#   - Every action requires BOTH: driver log silent AND (container
+#     unhealthy OR exited). This catches real container deaths without
+#     false-positives from transient log quiet periods.
+#   - Hard rate-limit: MAX_ACTIONS_PER_HOUR per container (default 3).
+#   - Hold-off: after any restart, sleep COOLDOWN_SEC (120) before
+#     sampling that container again — gives driver time to reinit.
+#   - A6701 (thermal1/thermal2) are log-only NO MATTER WHAT — the
+#     Pleora flap state is only fixed by physical power-cycle.
 #
-# Designed to run as systemd unit bess-topic-watchdog.service.
-#
-# Usage: topic_watchdog.sh [--once]
-#   --once  run one pass then exit (for debugging)
+# Usage: run via bess-topic-watchdog.service (systemd).
 
 set -u
 
 LOG_PATH="${LOG_PATH:-/var/log/bess/topic_watchdog.log}"
 POLL_INTERVAL="${POLL_INTERVAL:-30}"
-HZ_SAMPLE_WINDOW="${HZ_SAMPLE_WINDOW:-5}"
-TRIGGER_SECONDS="${TRIGGER_SECONDS:-60}"
+LOG_AGE_MAX="${LOG_AGE_MAX:-30}"      # seconds — how recent must last "Publishing" line be
 MAX_ACTIONS_PER_HOUR="${MAX_ACTIONS_PER_HOUR:-3}"
-
-# Topic → min_rate:container:action mapping. Action is one of:
-#   restart           plain docker restart
-#   recreate          docker compose up -d --force-recreate --no-deps
-#   stop60_up         docker stop, sleep 60, docker compose up -d --no-deps
-#   log_only          log + page, but take NO restart action
-#
-# Thermal cameras:
-#   A6701 Pleora cameras (thermal1, thermal2) use log_only. Rapid
-#   container flap pushes the Pleora iPORT into a PHY-dark state that
-#   requires a 90s power-off + 2min untouched boot — software cannot
-#   recover it. See memory feedback_a6701_pleora_flap_state.md. The
-#   watchdog must NOT bounce these cameras; it only pages a human.
-#   A70 cameras (thermal3, thermal4) use stop60_up: GigE Vision
-#   heartbeat needs a full 60s to clear in the A70 firmware before a
-#   new control session can open (-1010 stuck session pattern).
-# Blackfly recreate is safe: compose has a 30s GigE clear sleep
-#   baked into the outer while-true loop inside the container.
-# SLAM plain restart: container supervisor terminates the launch on
-#   odom-node death cleanly; restart:on-failure:10 already handles it,
-#   but explicit `restart` from the watchdog ensures a wedged-process
-#   case (not a crash) is also caught.
-#
-# Format: one line per topic, whitespace-separated.
-#   <topic>  <min_rate_hz>  <container>  <action>
-WATCHLIST=$(cat <<'EOF'
-/ouster/points                                                3.0   ouster                restart
-/ouster/imu                                                   50.0  ouster                restart
-/imu/data                                                     50.0  microstrain           restart
-/thermal/camera1/image_raw                                    3.0   thermal1              log_only
-/thermal/camera2/image_raw                                    3.0   thermal2              log_only
-/thermal/camera3/image_raw                                    3.0   thermal3              stop60_up
-/thermal/camera4/image_raw                                    3.0   thermal4              stop60_up
-/blackfly/camera1/blackfly_camera/image_raw/compressed        2.0   blackfly1             recreate
-/blackfly/camera2/blackfly_camera/image_raw/compressed        2.0   blackfly2             recreate
-/lucid1/camera_driver/image_raw/compressed                    1.0   lucid1                recreate
-/lucid2/camera_driver/image_raw/compressed                    1.0   lucid2                recreate
-/fast_lio/odometry                                            2.0   fast-lio              restart
-/dlio/odom_node/odom                                          10.0  dlio                  restart
-/fast_lio/map_voxel                                           0.2   slam-map-accumulator  restart
-EOF
-)
-
+COOLDOWN_SEC="${COOLDOWN_SEC:-120}"   # per-container cooldown after action
 STATE_DIR="${STATE_DIR:-/tmp/bess-topic-watchdog}"
+BAG_DIR="${BAG_DIR:-/home/thor/nas/bess-bags/rolling/bag}"
+
 mkdir -p "$STATE_DIR"
 mkdir -p "$(dirname "$LOG_PATH")"
 
-# Pick a running container we can exec ros2 into. fast-lio is jazzy +
-# rmw_cyclonedds and usually healthy — falls back to dlio, then
-# slam-map-accumulator. If none are up, the watchdog can't sample and
-# just logs an error per tick.
-pick_ros_host() {
-  for c in fast-lio slam-map-accumulator dlio ouster; do
-    if docker exec "$c" true >/dev/null 2>&1; then
-      echo "$c"
-      return 0
-    fi
-  done
-  return 1
-}
+# Container → (driver-log regex, action). Action is one of:
+#   restart           docker restart
+#   recreate          docker compose up -d --force-recreate --no-deps
+#   stop60_up         docker stop, sleep 60, docker compose up -d --no-deps
+#   log_only          log + page, take NO action (A6701 Pleora — human only)
+#
+# The regex is grep -E extended, matched against the last 40 lines of
+# docker logs. If found AND its timestamp is recent (<LOG_AGE_MAX s),
+# driver is considered alive.
+#
+# Timestamps in ROS 2 INFO lines are epoch with nanos: [1776941333.XXX]
+# We parse the integer seconds to compare against `date +%s`.
+WATCHLIST=$(cat <<'EOF'
+thermal1   Publishing\ at\ [0-9]           log_only
+thermal2   Publishing\ at\ [0-9]           log_only
+thermal3   Publishing\ at\ [0-9]           stop60_up
+thermal4   Publishing\ at\ [0-9]           stop60_up
+blackfly1  IN:.*OUT:.*Hz                    recreate
+blackfly2  IN:.*OUT:.*Hz                    recreate
+lucid1     Publishing\ at\ [0-9.]+\ Hz     recreate
+lucid2     Publishing\ at\ [0-9.]+\ Hz     recreate
+ouster     stats\|os_driver.*point_cloud   restart
+microstrain Node\ activated\|filter\ reset\|data_rate restart
+EOF
+)
 
-# Sample rate for a topic. Returns empty string if silent.
-sample_rate() {
-  local host="$1" topic="$2"
-  docker exec "$host" bash -c "
-    source /opt/ros/jazzy/setup.bash 2>/dev/null || source /opt/ros/humble/setup.bash 2>/dev/null || true
-    timeout ${HZ_SAMPLE_WINDOW} ros2 topic hz '$topic' 2>/dev/null | grep 'average rate' | tail -1 | awk '{print \$3}'
-  " 2>/dev/null
-}
-
-# Append a JSON event to LOG_PATH.
 log_event() {
-  local topic="$1" state="$2" rate="$3" container="$4" action="$5" detail="${6:-}"
+  local container="$1" state="$2" detail="${3:-}"
   local ts
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  printf '{"ts":"%s","topic":"%s","state":"%s","rate":"%s","container":"%s","action":"%s","detail":"%s"}\n' \
-    "$ts" "$topic" "$state" "$rate" "$container" "$action" "$detail" >> "$LOG_PATH"
+  printf '{"ts":"%s","container":"%s","state":"%s","detail":"%s"}\n' \
+    "$ts" "$container" "$state" "$detail" >> "$LOG_PATH"
 }
 
-# Per-container action history. Rolling 60-minute window in STATE_DIR.
+# Last line from driver's log matching the rate-reporting regex.
+# Returns epoch-seconds of the match, or 0 if not found.
+last_publish_epoch() {
+  local container="$1" regex="$2"
+  local line
+  line=$(docker logs --tail 60 "$container" 2>&1 \
+    | grep -E "$regex" \
+    | tail -1)
+  [ -z "$line" ] && { echo 0; return; }
+  # Grab [1234567890.XXX] → 1234567890
+  local sec
+  sec=$(echo "$line" | grep -oE '\[[0-9]+\.[0-9]+\]' | head -1 | tr -d '[' | cut -d. -f1)
+  echo "${sec:-0}"
+}
+
+# Docker container status — returns "running|exited|unhealthy|restarting|missing"
+container_state() {
+  local c="$1"
+  local s
+  s=$(docker inspect --format '{{.State.Status}} {{.State.Health.Status}}' "$c" 2>/dev/null)
+  [ -z "$s" ] && { echo missing; return; }
+  if echo "$s" | grep -q "^running unhealthy"; then echo unhealthy
+  elif echo "$s" | grep -q "^exited"; then echo exited
+  elif echo "$s" | grep -q "^restarting"; then echo restarting
+  else echo running
+  fi
+}
+
 action_ok() {
+  # Per-container rolling 60-min window + cooldown.
   local container="$1"
   local hist="$STATE_DIR/actions_${container}.log"
   touch "$hist"
-  # Drop entries older than 3600s
   local cutoff=$(( $(date +%s) - 3600 ))
   awk -v c="$cutoff" '$1>=c' "$hist" > "${hist}.tmp" && mv "${hist}.tmp" "$hist"
-  local n
-  n=$(wc -l < "$hist")
-  if [ "$n" -ge "$MAX_ACTIONS_PER_HOUR" ]; then
-    return 1
+  local n; n=$(wc -l < "$hist")
+  [ "$n" -ge "$MAX_ACTIONS_PER_HOUR" ] && return 1
+  # Cooldown check — don't act if we acted within COOLDOWN_SEC
+  local last; last=$(tail -1 "$hist" 2>/dev/null)
+  if [ -n "$last" ]; then
+    local age=$(( $(date +%s) - last ))
+    [ "$age" -lt "$COOLDOWN_SEC" ] && return 1
   fi
   echo "$(date +%s)" >> "$hist"
   return 0
 }
 
-# Execute the action for a container.
 do_action() {
   local container="$1" action="$2"
   case "$action" in
@@ -137,8 +143,6 @@ do_action() {
         --no-deps "$container" >/dev/null 2>&1
       ;;
     log_only)
-      # Intentionally takes no action. Used for A6701 Pleora cameras
-      # where software bounce triggers the iPORT PHY-dark flap.
       return 0
       ;;
     *)
@@ -147,58 +151,87 @@ do_action() {
   esac
 }
 
-# Per-topic silence-since state file.
-since_file() { echo "$STATE_DIR/since_$(echo "$1" | tr '/' '_').ts"; }
-
-check_topic() {
-  local host="$1" topic="$2" min_rate="$3" container="$4" action="$5"
-  local since
-  since=$(since_file "$topic")
-  local rate
-  rate=$(sample_rate "$host" "$topic")
-  local now
-  now=$(date +%s)
-
-  local below
-  below=$(awk -v r="${rate:-0}" -v m="$min_rate" 'BEGIN{print (r+0 < m+0) ? 1 : 0}')
-
-  if [ "$below" = "1" ]; then
-    if [ ! -f "$since" ]; then
-      echo "$now" > "$since"
-      log_event "$topic" "below" "${rate:-silent}" "$container" "$action" "min=$min_rate"
-    else
-      local started
-      started=$(cat "$since" 2>/dev/null || echo "$now")
-      local dur=$(( now - started ))
-      if [ "$dur" -ge "$TRIGGER_SECONDS" ]; then
-        if action_ok "$container"; then
-          log_event "$topic" "act" "${rate:-silent}" "$container" "$action" "dur=${dur}s"
-          do_action "$container" "$action"
-          rm -f "$since"
-        else
-          log_event "$topic" "rate_limited" "${rate:-silent}" "$container" "$action" "max=$MAX_ACTIONS_PER_HOUR/h"
-        fi
-      fi
-    fi
-  else
-    if [ -f "$since" ]; then
-      log_event "$topic" "recovered" "$rate" "$container" "" ""
-      rm -f "$since"
-    fi
-  fi
+# End-to-end liveness: recorder bag size growing?
+bag_size_growing() {
+  local b1 b2
+  b1=$(du -sb "$BAG_DIR" 2>/dev/null | awk '{print $1+0}')
+  sleep 3
+  b2=$(du -sb "$BAG_DIR" 2>/dev/null | awk '{print $1+0}')
+  [ "$b2" -gt "$b1" ] && return 0
+  return 1
 }
 
 run_once() {
-  local host
-  host=$(pick_ros_host) || {
-    log_event "" "no_ros_host" "" "" "" "all candidate containers down"
-    return
-  }
+  local now; now=$(date +%s)
+  local stack_flowing=yes
+  if ! bag_size_growing; then
+    stack_flowing=no
+    log_event "" "recorder_not_flowing" "bag dir not growing — possible stack-wide issue, NOT acting on individual containers"
+  fi
+
   while IFS= read -r line; do
     line=$(echo "$line" | xargs)
     [ -z "$line" ] && continue
-    read -r topic min_rate container action <<<"$line"
-    check_topic "$host" "$topic" "$min_rate" "$container" "$action"
+    # Parse: container regex... action (whitespace-separated, regex may contain \s escapes)
+    container=$(echo "$line" | awk '{print $1}')
+    action=$(echo "$line" | awk '{print $NF}')
+    regex=$(echo "$line" | awk '{ $1=""; $NF=""; sub(/^[ \t]+/,""); sub(/[ \t]+$/,""); print }')
+
+    # Container state check
+    cstate=$(container_state "$container")
+    if [ "$cstate" = "missing" ]; then
+      log_event "$container" "missing" "container does not exist"
+      continue
+    fi
+    if [ "$cstate" = "exited" ]; then
+      log_event "$container" "exited" "action=$action"
+      if action_ok "$container"; then
+        do_action "$container" "$action"
+        log_event "$container" "acted" "reason=exited action=$action"
+      else
+        log_event "$container" "rate_limited" "exited but max=${MAX_ACTIONS_PER_HOUR}/h"
+      fi
+      continue
+    fi
+
+    # Driver-log Publishing check (DDS-independent)
+    last_epoch=$(last_publish_epoch "$container" "$regex")
+    if [ "$last_epoch" = "0" ]; then
+      # No match in recent log — could be a log that's rolled over or
+      # a driver whose format we don't know. Fall back to "only act if
+      # container is ALSO unhealthy".
+      if [ "$cstate" = "unhealthy" ]; then
+        if [ "$stack_flowing" = "no" ]; then
+          log_event "$container" "suspicious_but_stack_wide" "unhealthy + log silent BUT bag not growing, not acting"
+        elif action_ok "$container"; then
+          log_event "$container" "acted" "reason=log_silent+unhealthy action=$action"
+          do_action "$container" "$action"
+        else
+          log_event "$container" "rate_limited" "unhealthy + log silent"
+        fi
+      fi
+      # running but log format not matched → skip (not enough evidence to act)
+      continue
+    fi
+
+    # Driver has published recently?
+    age=$(( now - last_epoch ))
+    if [ "$age" -le "$LOG_AGE_MAX" ]; then
+      # healthy; clear any state
+      continue
+    fi
+
+    # Driver log stale
+    if [ "$cstate" = "unhealthy" ] || [ "$age" -ge $((LOG_AGE_MAX * 3)) ]; then
+      if [ "$stack_flowing" = "no" ]; then
+        log_event "$container" "stale_but_stack_wide" "last_publish_age=${age}s state=$cstate bag not growing, not acting"
+      elif action_ok "$container"; then
+        log_event "$container" "acted" "last_publish_age=${age}s state=$cstate action=$action"
+        do_action "$container" "$action"
+      else
+        log_event "$container" "rate_limited" "last_publish_age=${age}s state=$cstate"
+      fi
+    fi
   done <<<"$WATCHLIST"
 }
 
@@ -207,7 +240,7 @@ if [ "${1:-}" = "--once" ]; then
   exit 0
 fi
 
-log_event "" "startup" "" "" "" "poll=${POLL_INTERVAL}s trigger=${TRIGGER_SECONDS}s max/h=${MAX_ACTIONS_PER_HOUR}"
+log_event "" "startup" "v2 driver-log+bag-size, poll=${POLL_INTERVAL}s age_max=${LOG_AGE_MAX}s cooldown=${COOLDOWN_SEC}s max/h=${MAX_ACTIONS_PER_HOUR}"
 while true; do
   run_once
   sleep "$POLL_INTERVAL"

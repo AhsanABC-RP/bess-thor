@@ -1,0 +1,18 @@
+[Unit]
+Description=BESS sensor-subnet GigE Vision firewall (constrain GVCP/GVSP to mgbe0_0)
+Documentation=file:///home/thor/bess/scripts/bess-sensor-firewall.sh
+After=network-pre.target
+Before=bess-network.service bess-stack.service docker.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/thor/bess/scripts/bess-sensor-firewall.sh
+# On stop, remove our OUTPUT hook but keep the chain itself (harmless empty)
+ExecStop=/bin/sh -c 'iptables -D OUTPUT -j BESS_SENSOR_FW 2>/dev/null || true; iptables -F BESS_SENSOR_FW 2>/dev/null || true'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
