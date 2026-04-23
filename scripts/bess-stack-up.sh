@@ -63,19 +63,31 @@ $UP blackfly1 blackfly2 || LOG "WARN blackfly batch partial"
 sleep 20
 
 # --- Batch 5: A6701 thermal (Spinnaker PySpin) ------------------------------
-# Same SDK family as Blackfly but different container image. Staggered from
-# Blackfly by a full settle window so Spinnaker initiator heartbeats don't
-# cross.
-LOG "batch 5/10: thermal1 + thermal2 (A6701, PySpin)"
-$UP thermal1 thermal2 || LOG "WARN thermal A6701 batch partial"
+# A6701 Pleora iPORT firmware deterministically deadlocks when both A6701s
+# have their Spinnaker `System.GetCameras()` initialised in parallel — race
+# on shared GVCP control-channel state, one camera wins, the other goes into
+# the -1010/-1008 stuck-session firmware lockup that needs DC power-cycle to
+# clear. Confirmed pattern across multiple cold boots 2026-04-23: whichever
+# A6701 lost the race was bricked. CLAUDE.md R1 is explicit — never start
+# multiple GigE camera SDKs in parallel; this batch was the violation.
+# Fix: start thermal1 alone, give Spinnaker 30 s to fully claim its session
+# before thermal2 starts. 30 s is comfortably past the GigE Vision heartbeat
+# initial-handshake window (~5 s) plus image-streaming warmup.
+LOG "batch 5a/11: thermal1 alone (A6701#1, PySpin) — serialised to avoid Pleora race"
+$UP thermal1 || LOG "WARN thermal1 failed to start"
+sleep 30
+LOG "batch 5b/11: thermal2 alone (A6701#2, PySpin)"
+$UP thermal2 || LOG "WARN thermal2 failed to start"
 sleep 15
 
 # --- Batch 6: A70 thermal (patched PySpin, different GenICam) ---------------
-# A70 uses the same Spinnaker PySpin image as A6701 but hits a different
-# GenICam XML tree (MAX GevSCPD=512 vs A6701's larger value). Keep in its
-# own batch to avoid initializer-side races inside PySpin.
-LOG "batch 6/10: thermal3 + thermal4 (A70, PySpin patched)"
-$UP thermal3 thermal4 || LOG "WARN thermal A70 batch partial"
+# Same R1 logic as batch 5 — A70s don't seem to deadlock as deterministically
+# as A6701s under parallel start, but defensively serialised. Cost is 15 s.
+LOG "batch 6a/11: thermal3 alone (A70#1, PySpin patched)"
+$UP thermal3 || LOG "WARN thermal3 failed to start"
+sleep 15
+LOG "batch 6b/11: thermal4 alone (A70#2, PySpin patched)"
+$UP thermal4 || LOG "WARN thermal4 failed to start"
 sleep 15
 
 # --- Batch 7: Lucid Atlas (Arena SDK) ---------------------------------------
