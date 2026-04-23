@@ -20,12 +20,32 @@ set -u
 
 CONTAINER="${1:-}"
 case "$CONTAINER" in
-  thermal1) SFP_PORT=sfp28-15 ; CAM_IP=169.254.20.43  ;;
-  thermal2) SFP_PORT=sfp28-2  ; CAM_IP=169.254.249.149;;
+  thermal1|thermal2)
+    cat >&2 <<EOF
+REFUSING: $CONTAINER is an A6701 with Pleora iPORT.
+Per memory feedback_a6701_pleora_flap_state.md:
+
+  "Don't bounce the MikroTik port to 'help the link come up'.
+   The iPORT's PHY is confused; a switch-side bounce adds one more
+   transition to the exact sequence that put it into the fault state."
+
+This script's port disable/enable cycle is the WRONG recovery path for
+A6701. The documented recovery is:
+  1. docker stop $CONTAINER (end retry GVCP broadcasts) — DONE
+  2. Leave camera powered ON, UNTOUCHED, for >= 5 minutes
+  3. If still dark, physical DC power OFF >= 90 s (5 min if it was deep)
+  4. Plug back in, do NOT touch / probe for >= 2 min while it boots
+  5. Then: docker compose up -d --no-deps $CONTAINER
+
+This script is now safe only for A70 (thermal3, thermal4) which use a
+different (non-Pleora) GigE Vision front-end.
+EOF
+    exit 3
+    ;;
   thermal3) SFP_PORT=sfp28-3  ; CAM_IP=169.254.20.1   ;;
   thermal4) SFP_PORT=sfp28-4  ; CAM_IP=169.254.20.2   ;;
   *)
-    echo "Usage: $0 <thermal1|thermal2|thermal3|thermal4>" >&2
+    echo "Usage: $0 <thermal3|thermal4>  (A70 only — A6701s use physical DC cycle per memory)" >&2
     exit 2
     ;;
 esac
