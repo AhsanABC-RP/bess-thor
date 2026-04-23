@@ -1,0 +1,10 @@
+[Unit]
+Description=BESS sysctl drift watchdog (re-asserts 60-gige-sensors.conf)
+Documentation=file:///home/thor/bess/scripts/sysctl-assert.sh
+After=bess-network.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/thor/bess/scripts/sysctl-assert.sh
+StandardOutput=journal
+StandardError=journal

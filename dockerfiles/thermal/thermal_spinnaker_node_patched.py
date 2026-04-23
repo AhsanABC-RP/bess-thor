@@ -54,6 +54,16 @@ class ThermalSpinnakerNode(Node):
         # reset the counter. 15 is tight enough to catch sustained -1011
         # bursts without bouncing on single-packet drops.
         self.declare_parameter('error_threshold', 15)
+        # Stuck-state back-off: if the camera goes through `stuck_threshold`
+        # reconnect cycles without ever producing a Publishing-at-N-Hz
+        # log line (i.e. all attempts hit -1010 / -1008 / -1002 / -1005
+        # before any frame succeeds), assume Pleora firmware is in a
+        # stuck control-session state. Switch to `stuck_backoff_s` sleep
+        # instead of the normal reconnect_interval so the camera firmware
+        # actually drains its dead heartbeat instead of being kicked
+        # every minute. Counter resets to 0 on the first Publishing line.
+        self.declare_parameter('stuck_threshold', 3)
+        self.declare_parameter('stuck_backoff_s', 300.0)
         self.declare_parameter('binning', 1)
         self.declare_parameter('pixel_format', 'Mono16')
         self.declare_parameter('temperature_period_sec', 15.0)
@@ -68,6 +78,8 @@ class ThermalSpinnakerNode(Node):
         self.rate_floor_hz = float(self.get_parameter('rate_floor_hz').value)
         self.rate_floor_window_s = float(self.get_parameter('rate_floor_window_s').value)
         self.error_threshold = int(self.get_parameter('error_threshold').value)
+        self.stuck_threshold = int(self.get_parameter('stuck_threshold').value)
+        self.stuck_backoff_s = float(self.get_parameter('stuck_backoff_s').value)
         self.binning = self.get_parameter('binning').value
         self.pixel_format = self.get_parameter('pixel_format').value
         self.temp_period = float(self.get_parameter('temperature_period_sec').value)
@@ -101,6 +113,9 @@ class ThermalSpinnakerNode(Node):
         self._temp_node_units = {}
         self._temp_primary = None
         self._temp_housing = None
+        # Stuck-state counter: incremented on every reconnect attempt that
+        # didn't see a Publishing-at log line; reset on first publish.
+        self._reconnects_without_publish = 0
 
         # Start main loop in a thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -599,6 +614,22 @@ class ThermalSpinnakerNode(Node):
         self._temp_housing = None
         self._temp_nodes_missing.clear()
 
+    def _reconnect_sleep(self):
+        """Sleep before next reconnect, escalating to stuck back-off if the
+        camera has gone through stuck_threshold cycles without publishing.
+        Counter is reset to 0 the first time we see a successful frame."""
+        self._reconnects_without_publish += 1
+        if self._reconnects_without_publish >= self.stuck_threshold:
+            self.get_logger().warn(
+                f'STUCK_BACKOFF: {self._reconnects_without_publish} reconnects '
+                f'without a publish line — Pleora session probably stuck, '
+                f'sleeping {self.stuck_backoff_s:.0f}s instead of '
+                f'{self.reconnect_interval:.0f}s to let firmware drain'
+            )
+            time.sleep(self.stuck_backoff_s)
+        else:
+            time.sleep(self.reconnect_interval)
+
     def _run_loop(self):
         """Main loop: connect, acquire, reconnect on failure."""
         while self.running and rclpy.ok():
@@ -606,9 +637,9 @@ class ThermalSpinnakerNode(Node):
             if self.cam is None:
                 if not self.connect_camera():
                     self.get_logger().warn(
-                        f'Retrying in {self.reconnect_interval}s...'
+                        f'Retrying (stuck_count={self._reconnects_without_publish})...'
                     )
-                    time.sleep(self.reconnect_interval)
+                    self._reconnect_sleep()
                     continue
 
             # --- Acquire phase ---
@@ -618,7 +649,7 @@ class ThermalSpinnakerNode(Node):
             except PySpin.SpinnakerException as e:
                 self.get_logger().error(f'BeginAcquisition failed: {e}')
                 self._release_camera()
-                time.sleep(self.reconnect_interval)
+                self._reconnect_sleep()
                 continue
 
             consecutive_errors = 0
@@ -654,6 +685,13 @@ class ThermalSpinnakerNode(Node):
                     if now - last_log >= 5.0:
                         fps = frame_count / (now - last_log)
                         self.get_logger().info(f'Publishing at {fps:.1f} Hz')
+                        # First successful Publishing line clears stuck-state.
+                        if self._reconnects_without_publish > 0:
+                            self.get_logger().info(
+                                f'stuck_count cleared after '
+                                f'{self._reconnects_without_publish} reconnect(s)'
+                            )
+                            self._reconnects_without_publish = 0
                         # Rate-watchdog: mark/clear the low-rate-since anchor.
                         if self.rate_floor_hz > 0 and fps < self.rate_floor_hz:
                             if low_rate_since is None:
@@ -705,9 +743,9 @@ class ThermalSpinnakerNode(Node):
             self._release_camera()
             if self.running:
                 self.get_logger().info(
-                    f'Reconnecting in {self.reconnect_interval}s...'
+                    f'Reconnecting (stuck_count={self._reconnects_without_publish})...'
                 )
-                time.sleep(self.reconnect_interval)
+                self._reconnect_sleep()
 
     def _publish_image(self, image):
         """Convert Spinnaker image to ROS msg and publish."""
