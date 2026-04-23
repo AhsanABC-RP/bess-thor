@@ -106,12 +106,27 @@ sleep 5
 
 # --- Batch 10: inference + extraction ---------------------------------------
 # pii-mask is GPU (shares CUDA 0 with segformer but segformer is opt-in now
-# after the 2026-04-15 iGPU instability). extraction + glim consume SLAM
-# output and are downstream-only, safe together.
-LOG "batch 10/10: pii-mask + extraction + glim"
+# after the 2026-04-15 iGPU instability). extraction is downstream-only.
+# glim removed from boot path 2026-04-23: OOM-prone (Issue #25-related),
+# deprecated for OS1-128 (too sparse). Profile `glim-deprecated` only.
+LOG "batch 10/11: pii-mask + extraction"
 $UP pii-mask || LOG "WARN pii-mask failed to start"
 sleep 5
-$UP extraction glim || LOG "WARN extraction/glim batch partial"
+$UP extraction || LOG "WARN extraction failed to start"
+
+# --- Batch 11: recorder (F8 NAS soak) ---------------------------------------
+# Added to boot path 2026-04-23 — user requirement is auto-soak post-boot.
+# Output is the F8 NAS (10G sfp28-16) with 3 TB cap; --profile record gates
+# it so manual `docker compose up -d --no-deps recorder` still works without
+# the profile. The mount must already exist (handled by bess-network).
+LOG "batch 11/11: recorder (F8 NAS soak)"
+sleep 5
+if mountpoint -q /home/thor/nas/bess-bags 2>/dev/null || \
+   df /home/thor/nas/bess-bags 2>/dev/null | grep -q '169.254.100.30'; then
+    $UP recorder || LOG "WARN recorder failed to start"
+else
+    LOG "WARN F8 NAS not mounted at /home/thor/nas/bess-bags — recorder NOT started"
+fi
 
 LOG "=== sequenced stack startup COMPLETE ==="
 LOG "run 'docker ps' to verify; topic sweeps via foxglove bridge"

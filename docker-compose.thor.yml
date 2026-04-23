@@ -382,7 +382,7 @@ services:
             -p camera_mac:=1c:0f:af:07:a9:cd \
             -p camera_name:=lucid1 \
             -p frame_id:=lucid1_optical_frame \
-            -p fps:=3.0 \
+            -p fps:=5.0 \
             -p binning:=4 \
             -p exposure_us:=-1.0 \
             -p gain_db:=-1.0 || true
@@ -422,7 +422,7 @@ services:
             -p camera_mac:=1c:0f:af:07:a9:e7 \
             -p camera_name:=lucid2 \
             -p frame_id:=lucid2_optical_frame \
-            -p fps:=3.0 \
+            -p fps:=5.0 \
             -p binning:=4 \
             -p exposure_us:=-1.0 \
             -p gain_db:=-1.0 || true
@@ -453,13 +453,12 @@ services:
 
   # ===========================================================================
   # SENSORS - Stereolabs ZED 2i (RGB-D + IMU)
-  # Arena/Spinnaker peers are GigE; ZED is USB 3.x. Kept on its own in the
-  # launcher (no concurrent-SDK hazard here — Stereolabs SDK doesn't collide
-  # with Arena/Spinnaker discovery) but has its own CUDA depth pipeline which
-  # competes with fast-lio/dlio for the GPU when the full stack is up.
-  #
-  # Profile is `zed` only until topics verify (task #37). Once stable, add
-  # `sensors`/`full` and a compress sidecar.
+  # ---------------------------------------------------------------------------
+  # DISABLED 2026-04-23 — no ZED hardware attached to Thor (was a trial unit,
+  # never deployed). Service body kept for future reference but profile is
+  # `disabled-no-hardware` so it can't be brought up by any normal compose
+  # invocation. To re-enable when hardware returns: change profiles back to
+  # `[zed]` and verify the container builds against current Jazzy + CUDA 13.
   # ===========================================================================
   zed:
     <<: *common
@@ -474,19 +473,10 @@ services:
       - bash
       - -c
       - |
-        source /opt/ros/jazzy/setup.bash
-        source /ros2_ws/install/setup.bash
-        while true; do
-          echo "[zed] Starting ZED 2i wrapper..."
-          ros2 launch zed_wrapper zed_camera.launch.py \
-            camera_model:=zed2i \
-            namespace:=zed \
-            camera_name:=zed || true
-          echo "[zed] wrapper exited, restarting in 10s..."
-          sleep 10
-        done
+        echo "[zed] DISABLED — no hardware attached. Exiting."
+        exit 0
     profiles:
-      - zed
+      - disabled-no-hardware
 
   # ===========================================================================
   # SENSORS - Blackfly S (via Spinnaker)

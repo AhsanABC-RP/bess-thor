@@ -33,7 +33,11 @@
     # bounded-grid reimplementation of the map downsample.
     filter_size_surf: 0.5
     filter_size_map: 0.5
-    cube_side_length: 1000.0
+    # 2026-04-23: dropped from 1000 → 200 (FAST-LIO2 indoor default).
+    # 1000.0 with 0.5 leaves = (1000/0.5)^3 = 8e9 voxels which overflows
+    # int32 in pcl::VoxelGrid → "No Effective Points!" every scan and
+    # /fast_lio/odometry goes silent. 200/0.5 = 6.4e7, safely under int32.
+    cube_side_length: 200.0
     runtime_pos_log_enable: false
     map_file_path: "/tmp/fast_lio.pcd"
 

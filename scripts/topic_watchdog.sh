@@ -60,8 +60,8 @@ mkdir -p "$(dirname "$LOG_PATH")"
 WATCHLIST=$(cat <<'EOF'
 thermal1   Publishing\ at\ [0-9]           log_only
 thermal2   Publishing\ at\ [0-9]           log_only
-thermal3   Publishing\ at\ [0-9]           stop60_up
-thermal4   Publishing\ at\ [0-9]           stop60_up
+thermal3   Publishing\ at\ [0-9]           log_only
+thermal4   Publishing\ at\ [0-9]           log_only
 blackfly1  IN:.*OUT:.*Hz                    recreate
 blackfly2  IN:.*OUT:.*Hz                    recreate
 lucid1     Publishing\ at\ [0-9.]+\ Hz     recreate
