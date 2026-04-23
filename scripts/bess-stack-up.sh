@@ -32,8 +32,11 @@ LOG() { echo "[$(date +%H:%M:%S)] bess-stack-up: $*"; }
 LOG "=== starting sequenced stack startup ==="
 
 # --- Batch 1: infrastructure (lightweight, no hardware) ---------------------
-LOG "batch 1/10: foxglove bridges + WAN uplink helpers"
-$UP foxglove foxglove-local rutx ntrip || LOG "WARN batch 1 partial"
+# foxglove-web is the nginx-static Lichtblick UI on :8080 (iPad LAN viewer).
+# Was missing from the launcher pre-2026-04-23 — only foxglove + foxglove-local
+# (the WS bridges) were started; the HTTP bundle never came up post-boot.
+LOG "batch 1/11: foxglove bridges + Lichtblick web + WAN uplink helpers"
+$UP foxglove foxglove-local foxglove-web rutx ntrip || LOG "WARN batch 1 partial"
 sleep 10
 
 # --- Batch 2: LiDAR (GigE + CUDA driver init) -------------------------------
@@ -112,20 +115,32 @@ sleep 5
 LOG "batch 10/11: pii-mask + extraction"
 $UP pii-mask || LOG "WARN pii-mask failed to start"
 sleep 5
+# extraction also writes to F8 NAS (/home/thor/nas/bess-bags/extraction) so
+# trigger autofs first, same reasoning as batch 11.
+ls /home/thor/nas/bess-bags >/dev/null 2>&1
+mkdir -p /home/thor/nas/bess-bags/extraction 2>/dev/null || true
 $UP extraction || LOG "WARN extraction failed to start"
 
 # --- Batch 11: recorder (F8 NAS soak) ---------------------------------------
 # Added to boot path 2026-04-23 — user requirement is auto-soak post-boot.
 # Output is the F8 NAS (10G sfp28-16) with 3 TB cap; --profile record gates
 # it so manual `docker compose up -d --no-deps recorder` still works without
-# the profile. The mount must already exist (handled by bess-network).
+# the profile.
+#
+# NFS mount: the home-thor-nas-bess\x2dbags.mount unit is enabled and pulled
+# in at boot via multi-user.target. The .automount remains as a fallback for
+# on-demand re-trigger. Touching the path here forces autofs to actually
+# mount before docker tries the bind, since pre-2026-04-23 boots showed
+# docker bind failing with "no such device" because autofs hadn't been
+# triggered yet (extraction + recorder both died, exit 255).
 LOG "batch 11/11: recorder (F8 NAS soak)"
 sleep 5
-if mountpoint -q /home/thor/nas/bess-bags 2>/dev/null || \
-   df /home/thor/nas/bess-bags 2>/dev/null | grep -q '169.254.100.30'; then
+ls /home/thor/nas/bess-bags >/dev/null 2>&1   # force autofs trigger
+mkdir -p /home/thor/nas/bess-bags/extraction 2>/dev/null || true
+if mount | grep -q '169.254.100.30:.* on /home/thor/nas/bess-bags '; then
     $UP recorder || LOG "WARN recorder failed to start"
 else
-    LOG "WARN F8 NAS not mounted at /home/thor/nas/bess-bags — recorder NOT started"
+    LOG "WARN F8 NAS NFS not mounted at /home/thor/nas/bess-bags — recorder NOT started"
 fi
 
 LOG "=== sequenced stack startup COMPLETE ==="
