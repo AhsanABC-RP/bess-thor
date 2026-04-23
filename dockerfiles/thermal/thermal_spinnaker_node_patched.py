@@ -19,9 +19,69 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image, CameraInfo, Temperature
 from std_msgs.msg import Header
 import numpy as np
+import socket
+import struct
 import time
 import threading
 import PySpin
+
+
+# Raw GVCP probe constants — pre-Init gate to confirm camera MAC is GVCP-
+# responsive BEFORE we trigger Spinnaker SDK enumeration. Two A6701 units
+# (`:20` 2026-04-22 and `:4C` 2026-04-23) were lost following sequences
+# that combined `docker stop/up` retry loops + MikroTik port bounces +
+# Spinnaker re-enumeration cycles against an already-flapping iPORT.
+# The fix is to NOT enumerate Spinnaker if the camera isn't already
+# answering GVCP — single passive probe per cycle, no per-minute SDK kick.
+GVCP_PORT = 3956
+GVCP_KEY = 0x42
+GVCP_FLAG_ACK_REQ = 0x01
+GVCP_CMD_DISCOVERY = 0x0002
+GVCP_SENSOR_SRC_IP = "169.254.100.1"
+
+
+def _gvcp_passive_probe(target_mac_lower, timeout_s=2.0):
+    """Send one GVCP DISCOVERY broadcast on the sensor subnet, return True
+    if `target_mac_lower` (lowercased "aa:bb:cc:dd:ee:ff") appears in any
+    reply. False on no reply or no match. Does not open a control session;
+    DISCOVERY is read-only at the camera level. Single shot per call."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind((GVCP_SENSOR_SRC_IP, 0))
+        except OSError:
+            # Not on sensor subnet — gate fails open (don't block) so we
+            # don't accidentally disable cameras during dev outside Thor.
+            return True
+        s.settimeout(0.3)
+        hdr = struct.pack(">BBHHH", GVCP_KEY, GVCP_FLAG_ACK_REQ,
+                          GVCP_CMD_DISCOVERY, 0, 0xAA00 & 0xFFFF)
+        s.sendto(hdr, ("255.255.255.255", GVCP_PORT))
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            try:
+                data, _ = s.recvfrom(4096)
+            except socket.timeout:
+                continue
+            # DISCOVERY_ACK has 0xF8 byte for MAC offset (RFC: bytes 18-23)
+            if len(data) < 24:
+                continue
+            mac_bytes = data[18:24]
+            mac_str = ":".join(f"{b:02x}" for b in mac_bytes)
+            if mac_str == target_mac_lower:
+                return True
+        return False
+    except Exception:
+        # Any failure → gate fails open so we don't permanently block
+        # cameras due to a probe bug.
+        return True
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
 
 
 class ThermalSpinnakerNode(Node):
@@ -162,6 +222,23 @@ class ThermalSpinnakerNode(Node):
     def connect_camera(self) -> bool:
         """Connect to camera via Spinnaker, using sensor interface only."""
         try:
+            # Pre-Init GVCP gate — confirm the camera's MAC is responding to
+            # passive GVCP DISCOVERY BEFORE we initialise Spinnaker. If the
+            # camera is in flap-state, dark on the wire, or bricked, we do
+            # NOT want to keep triggering Spinnaker's internal interface-walk
+            # enumeration (which sends GVCP control-channel packets to every
+            # camera on the subnet on every Init). That cumulative SDK-init
+            # traffic is what deepened the 2026-04-22/2026-04-23 A6701 brick
+            # cycles. Single read-only DISCOVERY broadcast per cycle, ~2 s.
+            if self.camera_mac:
+                if not _gvcp_passive_probe(self.camera_mac.lower()):
+                    self.get_logger().warn(
+                        f'GVCP gate: {self.camera_mac} not responding to '
+                        f'passive discovery — skipping Spinnaker Init this '
+                        f'cycle (camera dark / flap-state / bricked)'
+                    )
+                    return False
+
             if self.system is None:
                 self.system = PySpin.System.GetInstance()
 
