@@ -31,12 +31,20 @@
     # bounds to the full local submap. Keep 0.5 / 0.5 until we either lower
     # cube_side_length (FAST-LIO2 indoor default is 200) or move to a
     # bounded-grid reimplementation of the map downsample.
+    # 2026-04-23 round 3: ASYMMETRIC voxel sizes.
+    # filter_size_surf operates on raw input scan (Ouster OS1-128 has
+    # ~120m max range → per-axis extent ~240m). Lowering this to 0.2
+    # creates 1200^3 = 1.7e9 voxels which trips the PCL int32 overflow
+    # guard despite math being technically safe — outlier points push
+    # extent past the safety check. Keep at 0.5 for input scan stability.
+    #
+    # filter_size_map operates on the LOCAL MAP, bounded by
+    # cube_side_length, so 200/0.2 = 1000^3 = 1e9 voxels — well
+    # under int32 max. Smaller map voxels = denser plane correspondences
+    # for the iEKF, fixes the "No Effective Points" / pose-divergence
+    # observed at 0.5 map voxel.
     filter_size_surf: 0.5
-    filter_size_map: 0.5
-    # 2026-04-23: dropped from 1000 → 200 (FAST-LIO2 indoor default).
-    # 1000.0 with 0.5 leaves = (1000/0.5)^3 = 8e9 voxels which overflows
-    # int32 in pcl::VoxelGrid → "No Effective Points!" every scan and
-    # /fast_lio/odometry goes silent. 200/0.5 = 6.4e7, safely under int32.
+    filter_size_map: 0.2
     cube_side_length: 200.0
     runtime_pos_log_enable: false
     map_file_path: "/tmp/fast_lio.pcd"
@@ -58,8 +66,16 @@
       blind: 1.0                       # Minimum range (meters)
 
     mapping:
-      acc_cov: 0.1
-      gyr_cov: 0.1
+      # 2026-04-23 round 2: tightened from 0.1/0.1 to 0.05/0.01.
+      # Ouster OS1 IMU is tactical-grade (TDK ICM-20948 with 16 g
+      # accel, 2000 dps gyro, factory-calibrated). Defaults at 0.1
+      # are sized for cheap MEMS — too loose for OS1, EKF over-trusts
+      # IMU integration vs LiDAR correction → drift in degenerate
+      # observability frames (long featureless corridors, sparse
+      # outdoor scenes) which compounds with too-coarse map-side
+      # voxelization to produce "No Effective Points" + km-scale drift.
+      acc_cov: 0.05
+      gyr_cov: 0.01
       b_acc_cov: 0.0001
       b_gyr_cov: 0.0001
       fov_degree: 360.0
